@@ -188,7 +188,14 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 // Secrets to strip from Bash tool subprocess environments.
 // These are needed by claude-code for API auth but should never
 // be visible to commands Kit runs.
-const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+const SECRET_ENV_VARS = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'TODOIST_API_TOKEN',
+  'GOOGLE_OAUTH_CREDENTIALS_1',
+  'GOOGLE_OAUTH_CREDENTIALS_2',
+  'GOOGLE_OAUTH_CREDENTIALS_3',
+];
 
 function createSanitizeBashHook(): HookCallback {
   return async (input, _toolUseId, _context) => {
@@ -432,7 +439,14 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__todoist__*',
+        'mcp__gmail_account1__*',
+        'mcp__gmail_account2__*',
+        'mcp__gmail_account3__*',
+        'mcp__calendar_account1__*',
+        'mcp__calendar_account2__*',
+        'mcp__calendar_account3__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -446,6 +460,52 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+          },
+        },
+        ...(sdkEnv.TODOIST_API_TOKEN ? {
+          todoist: {
+            command: 'npx',
+            args: ['@greirson/mcp-todoist'],
+            env: { TODOIST_API_TOKEN: sdkEnv.TODOIST_API_TOKEN },
+          },
+        } : {}),
+        gmail_account1: {
+          command: 'npx',
+          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
+          env: { HOME: '/home/node/.gmail-account1' },
+        },
+        gmail_account2: {
+          command: 'npx',
+          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
+          env: { HOME: '/home/node/.gmail-account2' },
+        },
+        gmail_account3: {
+          command: 'npx',
+          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
+          env: { HOME: '/home/node/.gmail-account3' },
+        },
+        calendar_account1: {
+          command: 'npx',
+          args: ['-y', '@cocal/google-calendar-mcp'],
+          env: {
+            GOOGLE_OAUTH_CREDENTIALS: sdkEnv.GOOGLE_OAUTH_CREDENTIALS_1 || '',
+            GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account1/tokens.json',
+          },
+        },
+        calendar_account2: {
+          command: 'npx',
+          args: ['-y', '@cocal/google-calendar-mcp'],
+          env: {
+            GOOGLE_OAUTH_CREDENTIALS: sdkEnv.GOOGLE_OAUTH_CREDENTIALS_2 || '',
+            GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account2/tokens.json',
+          },
+        },
+        calendar_account3: {
+          command: 'npx',
+          args: ['-y', '@cocal/google-calendar-mcp'],
+          env: {
+            GOOGLE_OAUTH_CREDENTIALS: sdkEnv.GOOGLE_OAUTH_CREDENTIALS_3 || '',
+            GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account3/tokens.json',
           },
         },
       },

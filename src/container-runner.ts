@@ -139,6 +139,33 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Gmail credentials for all 3 accounts - mount entire account dir as HOME
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  for (let i = 1; i <= 3; i++) {
+    const gmailDir = path.join(homeDir, `.gmail-mcp-account${i}`);
+    if (fs.existsSync(gmailDir)) {
+      mounts.push({
+        hostPath: gmailDir,
+        containerPath: `/home/node/.gmail-account${i}`,
+        readonly: false, // MCP may need to refresh tokens and write npm cache
+      });
+    }
+  }
+
+  // Calendar tokens for all 3 accounts
+  for (let i = 1; i <= 3; i++) {
+    const tokenPath = i === 1
+      ? path.join(homeDir, '.config', 'google-calendar-mcp')
+      : path.join(homeDir, '.config', `google-calendar-mcp-account${i}`);
+    if (fs.existsSync(tokenPath)) {
+      mounts.push({
+        hostPath: tokenPath,
+        containerPath: `/home/node/.config/google-calendar-mcp-account${i}`,
+        readonly: false, // MCP may need to refresh tokens
+      });
+    }
+  }
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -183,7 +210,23 @@ function buildVolumeMounts(
  * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'TODOIST_API_TOKEN']);
+
+  // Load Google OAuth credentials for Calendar MCP
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  for (let i = 1; i <= 3; i++) {
+    const credFile = path.join(homeDir, `.gmail-mcp-account${i}`, '.gmail-mcp', 'gcp-oauth.keys.json');
+    if (fs.existsSync(credFile)) {
+      try {
+        const creds = fs.readFileSync(credFile, 'utf-8');
+        secrets[`GOOGLE_OAUTH_CREDENTIALS_${i}`] = creds;
+      } catch (err) {
+        logger.warn({ account: i, error: err }, 'Failed to read Google OAuth credentials');
+      }
+    }
+  }
+
+  return secrets;
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
