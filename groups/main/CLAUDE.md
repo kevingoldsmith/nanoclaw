@@ -19,9 +19,9 @@ You have access to 3 Gmail accounts via MCP tools:
 
 | Account | MCP Prefix | Email Address |
 |---------|-----------|---------------|
-| Account 1 | `mcp__gmail_account1__` | kevin@nimbleautonomy.com |
-| Account 2 | `mcp__gmail_account2__` | kevin.goldsmith@gmail.com |
-| Account 3 | `mcp__gmail_account3__` | kevin@distrokid.com |
+| Account 1 | `mcp__gmail_account1__` | account1@example.com |
+| Account 2 | `mcp__gmail_account2__` | account2@example.com |
+| Account 3 | `mcp__gmail_account3__` | account3@example.com |
 
 **Available tools for each account:**
 - `search_emails` - Search emails with Gmail query syntax
@@ -45,9 +45,9 @@ You have access to the same 3 Google accounts for Calendar via MCP tools:
 
 | Account | MCP Prefix | Email Address |
 |---------|-----------|---------------|
-| Account 1 | `mcp__calendar_account1__` | kevin@nimbleautonomy.com |
-| Account 2 | `mcp__calendar_account2__` | kevin.goldsmith@gmail.com |
-| Account 3 | `mcp__calendar_account3__` | kevin@distrokid.com |
+| Account 1 | `mcp__calendar_account1__` | account1@example.com |
+| Account 2 | `mcp__calendar_account2__` | account2@example.com |
+| Account 3 | `mcp__calendar_account3__` | account3@example.com |
 
 **Available tools for each account:**
 - `list_calendars` - List all calendars for the account

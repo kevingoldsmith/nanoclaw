@@ -28,9 +28,9 @@ This document describes the currently configured MCP integrations and how to add
 **Mode:** Tool mode (read/send when asked via WhatsApp)
 
 **Accounts configured:**
-1. **Account 1** (`gmail_account1`) - kevin@nimbleautonomy.com
-2. **Account 2** (`gmail_account2`) - kevin.goldsmith@gmail.com
-3. **Account 3** (`gmail_account3`) - kevin@distrokid.com
+1. **Account 1** (`gmail_account1`) - account1@example.com
+2. **Account 2** (`gmail_account2`) - account2@example.com
+3. **Account 3** (`gmail_account3`) - account3@example.com
 
 **Tools available per account:**
 - `search_emails` - Search with Gmail query syntax

@@ -5,9 +5,9 @@ Complete setup guide for adding Gmail accounts to NanoClaw using `@gongrzhe/serv
 ## Current Setup (2026-02-23)
 
 **3 Gmail accounts configured:**
-1. kevin@nimbleautonomy.com
-2. kevin.goldsmith@gmail.com
-3. kevin@distrokid.com
+1. account1@example.com
+2. account2@example.com
+3. account3@example.com
 
 **Mode:** Tool mode (read/send when asked via WhatsApp)
 
