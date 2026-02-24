@@ -152,8 +152,19 @@ function buildVolumeMounts(
     }
   }
 
-  // Calendar tokens for all 3 accounts
+  // Calendar OAuth credentials and tokens for all 3 accounts
   for (let i = 1; i <= 3; i++) {
+    // Mount OAuth credentials directory (contains gcp-oauth.keys.json)
+    const gmailMcpDir = path.join(homeDir, `.gmail-mcp-account${i}`, '.gmail-mcp');
+    if (fs.existsSync(gmailMcpDir)) {
+      mounts.push({
+        hostPath: gmailMcpDir,
+        containerPath: `/home/node/.calendar-creds-account${i}`,
+        readonly: true, // OAuth credentials are read-only
+      });
+    }
+
+    // Mount token storage directory
     const tokenPath = i === 1
       ? path.join(homeDir, '.config', 'google-calendar-mcp')
       : path.join(homeDir, '.config', `google-calendar-mcp-account${i}`);
@@ -210,23 +221,7 @@ function buildVolumeMounts(
  * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
-  const secrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'TODOIST_API_TOKEN']);
-
-  // Load Google OAuth credentials for Calendar MCP
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-  for (let i = 1; i <= 3; i++) {
-    const credFile = path.join(homeDir, `.gmail-mcp-account${i}`, '.gmail-mcp', 'gcp-oauth.keys.json');
-    if (fs.existsSync(credFile)) {
-      try {
-        const creds = fs.readFileSync(credFile, 'utf-8');
-        secrets[`GOOGLE_OAUTH_CREDENTIALS_${i}`] = creds;
-      } catch (err) {
-        logger.warn({ account: i, error: err }, 'Failed to read Google OAuth credentials');
-      }
-    }
-  }
-
-  return secrets;
+  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'TODOIST_API_TOKEN']);
 }
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {

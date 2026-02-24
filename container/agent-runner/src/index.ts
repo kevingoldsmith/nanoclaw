@@ -192,9 +192,6 @@ const SECRET_ENV_VARS = [
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
   'TODOIST_API_TOKEN',
-  'GOOGLE_OAUTH_CREDENTIALS_1',
-  'GOOGLE_OAUTH_CREDENTIALS_2',
-  'GOOGLE_OAUTH_CREDENTIALS_3',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -488,7 +485,7 @@ async function runQuery(
           command: 'npx',
           args: ['-y', '@cocal/google-calendar-mcp'],
           env: {
-            GOOGLE_OAUTH_CREDENTIALS: sdkEnv.GOOGLE_OAUTH_CREDENTIALS_1 || '',
+            GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account1/gcp-oauth.keys.json',
             GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account1/tokens.json',
           },
         },
@@ -496,7 +493,7 @@ async function runQuery(
           command: 'npx',
           args: ['-y', '@cocal/google-calendar-mcp'],
           env: {
-            GOOGLE_OAUTH_CREDENTIALS: sdkEnv.GOOGLE_OAUTH_CREDENTIALS_2 || '',
+            GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account2/gcp-oauth.keys.json',
             GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account2/tokens.json',
           },
         },
@@ -504,7 +501,7 @@ async function runQuery(
           command: 'npx',
           args: ['-y', '@cocal/google-calendar-mcp'],
           env: {
-            GOOGLE_OAUTH_CREDENTIALS: sdkEnv.GOOGLE_OAUTH_CREDENTIALS_3 || '',
+            GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account3/gcp-oauth.keys.json',
             GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account3/tokens.json',
           },
         },
