@@ -36,6 +36,10 @@ export class WhatsAppChannel implements Channel {
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
+  private healthCheckTimerStarted = false;
+  private reconnectAttempts = 0;
+  private lastConnectionTime: Date | null = null;
+  private lastDisconnectTime: Date | null = null;
 
   private opts: WhatsAppChannelOpts;
 
@@ -54,6 +58,16 @@ export class WhatsAppChannel implements Channel {
     fs.mkdirSync(authDir, { recursive: true });
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
+
+    // If no credentials exist, don't try to connect — require re-authentication
+    if (!state.creds.registered) {
+      const msg = 'WhatsApp not authenticated. Run /setup in Claude Code to scan QR code.';
+      logger.error(msg);
+      exec(
+        `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
+      );
+      return; // Don't connect — avoids rate-limit loop from repeated registration attempts
+    }
 
     this.sock = makeWASocket({
       auth: {
@@ -80,27 +94,74 @@ export class WhatsAppChannel implements Channel {
 
       if (connection === 'close') {
         this.connected = false;
+        this.lastDisconnectTime = new Date();
         const reason = (lastDisconnect?.error as { output?: { statusCode?: number } })?.output?.statusCode;
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
-        logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
+
+        const disconnectDuration = this.lastConnectionTime
+          ? Math.round((this.lastDisconnectTime.getTime() - this.lastConnectionTime.getTime()) / 1000 / 60)
+          : null;
+
+        logger.warn({
+          reason,
+          shouldReconnect,
+          queuedMessages: this.outgoingQueue.length,
+          reconnectAttempts: this.reconnectAttempts,
+          disconnectDuration: disconnectDuration ? `${disconnectDuration} minutes` : 'N/A'
+        }, 'WhatsApp connection closed');
 
         if (shouldReconnect) {
-          logger.info('Reconnecting...');
-          this.connectInternal().catch((err) => {
-            logger.error({ err }, 'Failed to reconnect, retrying in 5s');
-            setTimeout(() => {
-              this.connectInternal().catch((err2) => {
-                logger.error({ err: err2 }, 'Reconnection retry failed');
-              });
-            }, 5000);
-          });
+          this.reconnectAttempts++;
+
+          // If we've been getting 405s (rate-limited registration), stop trying —
+          // the auth is likely gone and hammering WA servers makes it worse
+          if (reason === 405 && this.reconnectAttempts > 5) {
+            const msg = 'WhatsApp rate-limited after too many attempts. Auth may be invalid. Run /setup to re-authenticate.';
+            logger.error(msg);
+            exec(
+              `osascript -e 'display notification "${msg}" with title "NanoClaw Alert" sound name "Basso"'`,
+            );
+            return; // Stop reconnecting
+          }
+
+          const backoffDelay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 60000); // Cap at 60s
+          logger.info({ attempt: this.reconnectAttempts, delayMs: backoffDelay }, 'Scheduling reconnection...');
+
+          setTimeout(() => {
+            this.connectInternal().catch((err) => {
+              logger.error({ err, attempt: this.reconnectAttempts }, 'Reconnection failed, will retry');
+
+              // Alert if stuck after many attempts
+              if (this.reconnectAttempts >= 5) {
+                const msg = `WhatsApp reconnection failing (${this.reconnectAttempts} attempts). Check logs.`;
+                logger.error(msg);
+                exec(
+                  `osascript -e 'display notification "${msg}" with title "NanoClaw Alert" sound name "Basso"'`,
+                );
+              }
+            });
+          }, backoffDelay);
         } else {
-          logger.info('Logged out. Run /setup to re-authenticate.');
+          logger.error('Logged out from WhatsApp. Run /setup to re-authenticate.');
+          const msg = 'WhatsApp logged out. Re-authentication required.';
+          exec(
+            `osascript -e 'display notification "${msg}" with title "NanoClaw Alert" sound name "Basso"'`,
+          );
           process.exit(0);
         }
       } else if (connection === 'open') {
         this.connected = true;
-        logger.info('Connected to WhatsApp');
+        this.lastConnectionTime = new Date();
+        this.reconnectAttempts = 0; // Reset on successful connection
+
+        const reconnectDuration = this.lastDisconnectTime
+          ? Math.round((this.lastConnectionTime.getTime() - this.lastDisconnectTime.getTime()) / 1000)
+          : null;
+
+        logger.info({
+          reconnectDuration: reconnectDuration ? `${reconnectDuration} seconds` : 'N/A',
+          queuedMessages: this.outgoingQueue.length
+        }, 'Connected to WhatsApp');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
         this.sock.sendPresenceUpdate('available').catch((err) => {
@@ -126,6 +187,7 @@ export class WhatsAppChannel implements Channel {
         this.syncGroupMetadata().catch((err) =>
           logger.error({ err }, 'Initial group sync failed'),
         );
+
         // Set up daily sync timer (only once)
         if (!this.groupSyncTimerStarted) {
           this.groupSyncTimerStarted = true;
@@ -134,6 +196,14 @@ export class WhatsAppChannel implements Channel {
               logger.error({ err }, 'Periodic group sync failed'),
             );
           }, GROUP_SYNC_INTERVAL_MS);
+        }
+
+        // Set up health check timer (only once)
+        if (!this.healthCheckTimerStarted) {
+          this.healthCheckTimerStarted = true;
+          setInterval(() => {
+            this.logHealthStatus();
+          }, 5 * 60 * 1000); // Every 5 minutes
         }
 
         // Signal first connection to caller
@@ -326,6 +396,40 @@ export class WhatsAppChannel implements Channel {
       }
     } finally {
       this.flushing = false;
+    }
+  }
+
+  private logHealthStatus(): void {
+    const uptime = this.lastConnectionTime
+      ? Math.round((Date.now() - this.lastConnectionTime.getTime()) / 1000 / 60)
+      : null;
+
+    if (this.connected) {
+      logger.info({
+        status: 'connected',
+        uptime: uptime ? `${uptime} minutes` : 'N/A',
+        queuedMessages: this.outgoingQueue.length
+      }, 'WhatsApp health check: OK');
+    } else {
+      const downtime = this.lastDisconnectTime
+        ? Math.round((Date.now() - this.lastDisconnectTime.getTime()) / 1000 / 60)
+        : null;
+
+      logger.warn({
+        status: 'disconnected',
+        downtime: downtime ? `${downtime} minutes` : 'N/A',
+        reconnectAttempts: this.reconnectAttempts,
+        queuedMessages: this.outgoingQueue.length
+      }, 'WhatsApp health check: DISCONNECTED');
+
+      // Alert if disconnected for more than 10 minutes
+      if (downtime && downtime > 10) {
+        const msg = `WhatsApp disconnected for ${downtime} minutes. ${this.reconnectAttempts} reconnect attempts.`;
+        logger.error(msg);
+        exec(
+          `osascript -e 'display notification "${msg}" with title "NanoClaw Alert" sound name "Basso"'`,
+        );
+      }
     }
   }
 }

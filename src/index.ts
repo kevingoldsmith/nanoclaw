@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 
@@ -9,6 +10,7 @@ import {
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { SlackChannel } from './channels/slack.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -447,7 +449,32 @@ async function main(): Promise<void> {
   // Create and connect channels
   whatsapp = new WhatsAppChannel(channelOpts);
   channels.push(whatsapp);
-  await whatsapp.connect();
+  // Don't await WhatsApp connection - it may be in a reconnection loop
+  // Connection will happen asynchronously in the background
+  whatsapp.connect().catch((err) => {
+    logger.error({ err }, 'WhatsApp connection failed');
+  });
+
+  // Add Slack channel if tokens are configured
+  const slackAppToken = process.env.SLACK_APP_TOKEN;
+  const slackBotToken = process.env.SLACK_BOT_TOKEN;
+  if (slackAppToken && slackBotToken) {
+    const slack = new SlackChannel({
+      appToken: slackAppToken,
+      botToken: slackBotToken,
+      onMessage: (chatJid, message) => {
+        storeChatMetadata(chatJid, message.timestamp, undefined, 'slack');
+        storeMessage(message);
+        queue.enqueueMessageCheck(chatJid);
+      },
+      onChatMetadata: storeChatMetadata,
+    });
+    channels.push(slack);
+    await slack.connect();
+    logger.info('Slack channel enabled');
+  } else {
+    logger.info('Slack tokens not configured, skipping Slack channel');
+  }
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
