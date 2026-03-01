@@ -38,7 +38,7 @@ import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, NewMessage, OnConnectionStatus, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -438,24 +438,40 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
+  // Cross-channel health notifications: when one channel goes down,
+  // notify the user via every other connected channel.
+  const onConnectionStatus: OnConnectionStatus = (channelName, status, detail) => {
+    const statusText = status === 'connected'
+      ? `${channelName} is back online${detail ? ` (${detail})` : ''}`
+      : status === 'auth_required'
+        ? `${channelName} needs re-authentication${detail ? `: ${detail}` : ''}`
+        : `${channelName} disconnected${detail ? ` — ${detail}` : ''}`;
+
+    logger.info({ channelName, status, detail }, `Connection status: ${statusText}`);
+
+    for (const ch of channels) {
+      if (ch.name === channelName || !ch.isConnected()) continue;
+
+      // Find first registered group JID owned by this channel to use as destination
+      const targetJid = Object.keys(registeredGroups).find((jid) => ch.ownsJid(jid));
+      if (!targetJid) continue;
+
+      ch.sendMessage(targetJid, statusText).catch((err) => {
+        logger.warn({ err, targetChannel: ch.name }, 'Failed to send cross-channel health notification');
+      });
+    }
+  };
+
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (_chatJid: string, msg: NewMessage) => storeMessage(msg),
     onChatMetadata: (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) =>
       storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    onConnectionStatus,
     registeredGroups: () => registeredGroups,
   };
 
-  // Create and connect channels
-  whatsapp = new WhatsAppChannel(channelOpts);
-  channels.push(whatsapp);
-  // Don't await WhatsApp connection - it may be in a reconnection loop
-  // Connection will happen asynchronously in the background
-  whatsapp.connect().catch((err) => {
-    logger.error({ err }, 'WhatsApp connection failed');
-  });
-
-  // Add Slack channel if tokens are configured
+  // Connect Slack first so it's available to receive WhatsApp health notifications
   const slackAppToken = process.env.SLACK_APP_TOKEN;
   const slackBotToken = process.env.SLACK_BOT_TOKEN;
   if (slackAppToken && slackBotToken) {
@@ -468,6 +484,7 @@ async function main(): Promise<void> {
         queue.enqueueMessageCheck(chatJid);
       },
       onChatMetadata: storeChatMetadata,
+      onConnectionStatus,
     });
     channels.push(slack);
     await slack.connect();
@@ -475,6 +492,13 @@ async function main(): Promise<void> {
   } else {
     logger.info('Slack tokens not configured, skipping Slack channel');
   }
+
+  // Create and connect WhatsApp (non-blocking — may be in a reconnection loop)
+  whatsapp = new WhatsAppChannel(channelOpts);
+  channels.push(whatsapp);
+  whatsapp.connect().catch((err) => {
+    logger.error({ err }, 'WhatsApp connection failed');
+  });
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({

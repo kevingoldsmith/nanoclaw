@@ -1,12 +1,13 @@
 import { App } from '@slack/bolt';
 import { logger } from '../logger.js';
-import { Channel, OnInboundMessage, OnChatMetadata } from '../types.js';
+import { Channel, OnConnectionStatus, OnInboundMessage, OnChatMetadata } from '../types.js';
 
 export interface SlackChannelOpts {
   appToken: string;
   botToken: string;
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
+  onConnectionStatus?: OnConnectionStatus;
 }
 
 export class SlackChannel implements Channel {
@@ -84,6 +85,7 @@ export class SlackChannel implements Channel {
       logger.info('Connected to Slack');
     } catch (err) {
       logger.error({ err }, 'Failed to connect to Slack');
+      this.opts.onConnectionStatus?.('slack', 'disconnected', `Failed to connect: ${err}`);
       throw err;
     }
   }

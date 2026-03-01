@@ -92,6 +92,14 @@ export interface Channel {
 // Callback type that channels use to deliver inbound messages
 export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
 
+// Callback for cross-channel health notifications.
+// Channels fire this on meaningful state transitions (not every retry).
+export type OnConnectionStatus = (
+  channel: string,
+  status: 'connected' | 'disconnected' | 'auth_required',
+  detail?: string,
+) => void;
+
 // Callback for chat metadata discovery.
 // name is optional — channels that deliver names inline (Telegram) pass it here;
 // channels that sync names separately (WhatsApp syncGroupMetadata) omit it.

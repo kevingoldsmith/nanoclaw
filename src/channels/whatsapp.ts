@@ -17,13 +17,14 @@ import {
   updateChatName,
 } from '../db.js';
 import { logger } from '../logger.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+import { Channel, OnConnectionStatus, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
+  onConnectionStatus?: OnConnectionStatus;
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
@@ -40,6 +41,7 @@ export class WhatsAppChannel implements Channel {
   private reconnectAttempts = 0;
   private lastConnectionTime: Date | null = null;
   private lastDisconnectTime: Date | null = null;
+  private notifiedDisconnect = false;
 
   private opts: WhatsAppChannelOpts;
 
@@ -66,6 +68,7 @@ export class WhatsAppChannel implements Channel {
       exec(
         `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
       );
+      this.opts.onConnectionStatus?.('whatsapp', 'auth_required', msg);
       return; // Don't connect — avoids rate-limit loop from repeated registration attempts
     }
 
@@ -113,6 +116,12 @@ export class WhatsAppChannel implements Channel {
         if (shouldReconnect) {
           this.reconnectAttempts++;
 
+          // Notify other channels on first disconnect only
+          if (!this.notifiedDisconnect) {
+            this.notifiedDisconnect = true;
+            this.opts.onConnectionStatus?.('whatsapp', 'disconnected', `Disconnected (reason: ${reason}), reconnecting...`);
+          }
+
           // If we've been getting 405s (rate-limited registration), stop trying —
           // the auth is likely gone and hammering WA servers makes it worse
           if (reason === 405 && this.reconnectAttempts > 5) {
@@ -121,6 +130,7 @@ export class WhatsAppChannel implements Channel {
             exec(
               `osascript -e 'display notification "${msg}" with title "NanoClaw Alert" sound name "Basso"'`,
             );
+            this.opts.onConnectionStatus?.('whatsapp', 'auth_required', msg);
             return; // Stop reconnecting
           }
 
@@ -147,12 +157,15 @@ export class WhatsAppChannel implements Channel {
           exec(
             `osascript -e 'display notification "${msg}" with title "NanoClaw Alert" sound name "Basso"'`,
           );
+          this.opts.onConnectionStatus?.('whatsapp', 'auth_required', msg);
           process.exit(0);
         }
       } else if (connection === 'open') {
         this.connected = true;
         this.lastConnectionTime = new Date();
+        const wasDisconnected = this.notifiedDisconnect;
         this.reconnectAttempts = 0; // Reset on successful connection
+        this.notifiedDisconnect = false;
 
         const reconnectDuration = this.lastDisconnectTime
           ? Math.round((this.lastConnectionTime.getTime() - this.lastDisconnectTime.getTime()) / 1000)
@@ -162,6 +175,11 @@ export class WhatsAppChannel implements Channel {
           reconnectDuration: reconnectDuration ? `${reconnectDuration} seconds` : 'N/A',
           queuedMessages: this.outgoingQueue.length
         }, 'Connected to WhatsApp');
+
+        if (wasDisconnected) {
+          const detail = reconnectDuration ? `Back online after ${reconnectDuration}s` : 'Back online';
+          this.opts.onConnectionStatus?.('whatsapp', 'connected', detail);
+        }
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
         this.sock.sendPresenceUpdate('available').catch((err) => {
