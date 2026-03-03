@@ -443,7 +443,10 @@ async function runQuery(
         'mcp__gmail_account3__*',
         'mcp__calendar_account1__*',
         'mcp__calendar_account2__*',
-        'mcp__calendar_account3__*'
+        'mcp__calendar_account3__*',
+        'mcp__drive_account1__*',
+        'mcp__drive_account2__*',
+        'mcp__drive_account3__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -503,6 +506,30 @@ async function runQuery(
           env: {
             GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account3/gcp-oauth.keys.json',
             GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account3/tokens.json',
+          },
+        },
+        drive_account1: {
+          command: 'npx',
+          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          env: {
+            GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account1/gcp-oauth.keys.json',
+            GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account1/tokens.json',
+          },
+        },
+        drive_account2: {
+          command: 'npx',
+          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          env: {
+            GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account2/gcp-oauth.keys.json',
+            GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account2/tokens.json',
+          },
+        },
+        drive_account3: {
+          command: 'npx',
+          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          env: {
+            GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account3/gcp-oauth.keys.json',
+            GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account3/tokens.json',
           },
         },
       },

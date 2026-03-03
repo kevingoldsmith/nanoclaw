@@ -175,6 +175,16 @@ function buildVolumeMounts(
         readonly: false, // MCP may need to refresh tokens
       });
     }
+
+    // Drive token storage directory
+    const driveTokenPath = path.join(homeDir, '.config', `google-drive-mcp-account${i}`);
+    if (fs.existsSync(driveTokenPath)) {
+      mounts.push({
+        hostPath: driveTokenPath,
+        containerPath: `/home/node/.config/google-drive-mcp-account${i}`,
+        readonly: false, // MCP may need to refresh tokens
+      });
+    }
   }
 
   // Per-group IPC namespace: each group gets its own IPC directory
