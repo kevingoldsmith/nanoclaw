@@ -32,6 +32,9 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code @greirson/mcp-todoist @cocal/google-calendar-mcp @piotr-agier/google-drive-mcp
 
+# Install slack-mcp-server binary (DistroKid Slack read-only access via cookie tokens)
+COPY bin/slack-mcp-server /usr/local/bin/slack-mcp-server
+
 # Create app directory
 WORKDIR /app
 

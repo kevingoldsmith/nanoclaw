@@ -192,6 +192,8 @@ const SECRET_ENV_VARS = [
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
   'TODOIST_API_TOKEN',
+  'SLACK_MCP_XOXC_TOKEN',
+  'SLACK_MCP_XOXD_TOKEN',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -446,7 +448,8 @@ async function runQuery(
         'mcp__calendar_account3__*',
         'mcp__drive_account1__*',
         'mcp__drive_account2__*',
-        'mcp__drive_account3__*'
+        'mcp__drive_account3__*',
+        'mcp__distrokid_slack__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -532,6 +535,16 @@ async function runQuery(
             GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account3/tokens.json',
           },
         },
+        ...(sdkEnv.SLACK_MCP_XOXC_TOKEN && sdkEnv.SLACK_MCP_XOXD_TOKEN ? {
+          distrokid_slack: {
+            command: 'slack-mcp-server',
+            args: ['--transport', 'stdio'],
+            env: {
+              SLACK_MCP_XOXC_TOKEN: sdkEnv.SLACK_MCP_XOXC_TOKEN,
+              SLACK_MCP_XOXD_TOKEN: sdkEnv.SLACK_MCP_XOXD_TOKEN,
+            },
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
