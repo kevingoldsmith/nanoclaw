@@ -34,6 +34,10 @@ Text inside `<internal>` tags is logged but not sent to the user. If you've alre
 
 When working as a sub-agent or teammate, only use `send_message` if instructed to by the main agent.
 
+## Joplin Notes
+
+You have access to Joplin notes via MCP tools (`mcp__joplin__*`). Use these to search, read, create, and update notes in the user's Joplin notebook.
+
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.

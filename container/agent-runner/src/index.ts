@@ -194,6 +194,7 @@ const SECRET_ENV_VARS = [
   'TODOIST_API_TOKEN',
   'SLACK_MCP_XOXC_TOKEN',
   'SLACK_MCP_XOXD_TOKEN',
+  'JOPLIN_TOKEN',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -449,7 +450,8 @@ async function runQuery(
         'mcp__drive_account1__*',
         'mcp__drive_account2__*',
         'mcp__drive_account3__*',
-        'mcp__distrokid_slack__*'
+        'mcp__distrokid_slack__*',
+        'mcp__joplin__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -535,6 +537,17 @@ async function runQuery(
             GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account3/tokens.json',
           },
         },
+        ...(sdkEnv.JOPLIN_TOKEN ? {
+          joplin: {
+            command: 'joplin-mcp-server',
+            args: [],
+            env: {
+              JOPLIN_TOKEN: sdkEnv.JOPLIN_TOKEN,
+              JOPLIN_HOST: 'host.docker.internal',
+              JOPLIN_PORT: '41184',
+            },
+          },
+        } : {}),
         ...(sdkEnv.SLACK_MCP_XOXC_TOKEN && sdkEnv.SLACK_MCP_XOXD_TOKEN ? {
           distrokid_slack: {
             command: 'slack-mcp-server',
