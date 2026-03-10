@@ -24,7 +24,7 @@ Instead of application-level permission systems trying to prevent agents from ac
 
 ### Built for One User
 
-This isn't a framework or a platform. It's working software for my specific needs. I use WhatsApp and Email, so it supports WhatsApp and Email. I don't use Telegram, so it doesn't support Telegram. I add the integrations I actually want, not every possible integration.
+This isn't a framework or a platform. It's working software for my specific needs. I use WhatsApp, Slack, and Email, so it supports WhatsApp, Slack, and Email. I don't use Telegram, so it doesn't support Telegram. I add the integrations I actually want, not every possible integration.
 
 ### Customization = Code Changes
 
@@ -49,7 +49,7 @@ Skills we'd love contributors to build:
 ### Communication Channels
 Skills to add or switch to different messaging platforms:
 - `/add-telegram` - Add Telegram as an input channel
-- `/add-slack` - Add Slack as an input channel
+- ~~`/add-slack`~~ - ✅ Slack support built-in (see `src/channels/slack.ts`)
 - `/add-discord` - Add Discord as an input channel
 - `/add-sms` - Add SMS via Twilio or similar
 - `/convert-to-telegram` - Replace WhatsApp with Telegram entirely
@@ -66,16 +66,18 @@ The project uses Docker by default (cross-platform). For macOS users who prefer 
 
 ## Vision
 
-A personal Claude assistant accessible via WhatsApp, with minimal custom code.
+A personal Claude assistant accessible via WhatsApp and Slack, with minimal custom code.
 
 **Core components:**
 - **Claude Agent SDK** as the core agent
 - **Containers** for isolated agent execution (Linux VMs)
 - **WhatsApp** as the primary I/O channel
+- **Slack** as a secondary I/O channel
 - **Persistent memory** per conversation and globally
 - **Scheduled tasks** that run Claude and can message back
 - **Web access** for search and browsing
 - **Browser automation** via agent-browser
+- **MCP integrations** — Gmail, Google Calendar, Google Drive, Todoist, Joplin
 
 **Implementation approach:**
 - Use existing tools (WhatsApp connector, Claude Agent SDK, MCP servers)

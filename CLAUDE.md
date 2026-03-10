@@ -12,14 +12,23 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
 | `src/channels/whatsapp.ts` | WhatsApp connection, auth, send/receive |
+| `src/channels/slack.ts` | Slack channel (Socket Mode DMs and mentions) |
+| `src/types.ts` | Channel interface and core type definitions |
 | `src/ipc.ts` | IPC watcher and task processing |
 | `src/router.ts` | Message formatting and outbound routing |
 | `src/config.ts` | Trigger pattern, paths, intervals |
 | `src/container-runner.ts` | Spawns agent containers with mounts |
+| `src/container-runtime.ts` | Container runtime operations |
+| `src/mount-security.ts` | Mount allowlist validation |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
+| `src/env.ts` | Environment variable loading |
+| `src/group-folder.ts` | Group folder path validation and resolution |
+| `src/group-queue.ts` | Per-group queue with concurrency |
+| `src/logger.ts` | Pino logger setup |
+| `src/whatsapp-auth.ts` | WhatsApp QR code authentication |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
-| `container/skills/agent-browser.md` | Browser automation tool (available to all agents via Bash) |
+| `container/skills/agent-browser/SKILL.md` | Browser automation tool (available to all agents via Bash) |
 
 ## Skills
 
@@ -31,6 +40,14 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `/update` | Pull upstream NanoClaw changes, merge with customizations, run migrations |
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
+| `/add-telegram` | Add Telegram as a channel (standalone or alongside WhatsApp) |
+| `/add-telegram-swarm` | Add Agent Swarm support to Telegram |
+| `/add-discord` | Add Discord channel |
+| `/add-gmail` | Add Gmail integration (tool or full channel) |
+| `/add-voice-transcription` | Add voice message transcription via Whisper |
+| `/add-parallel` | Add Parallel AI integration |
+| `/x-integration` | X (Twitter) posting, liking, replying |
+| `/convert-to-apple-container` | Switch from Docker to Apple Container (macOS) |
 
 ## Development
 
