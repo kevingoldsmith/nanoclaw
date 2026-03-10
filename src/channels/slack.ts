@@ -13,25 +13,39 @@ export interface SlackChannelOpts {
 export class SlackChannel implements Channel {
   name = 'slack';
 
-  private app: App;
+  private app!: App;
   private connected = false;
   private opts: SlackChannelOpts;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private reconnectAttempts = 0;
+  private maxReconnectDelay = 60_000;
+  private intentionalDisconnect = false;
 
   constructor(opts: SlackChannelOpts) {
     this.opts = opts;
+    this.createApp();
+  }
 
+  private createApp(): void {
     this.app = new App({
-      token: opts.botToken,
-      appToken: opts.appToken,
+      token: this.opts.botToken,
+      appToken: this.opts.appToken,
       socketMode: true,
     });
 
+    this.setupMessageHandlers();
+  }
+
+  private setupMessageHandlers(): void {
     // Handle direct messages
     this.app.message(async ({ message, say }) => {
       if (message.subtype) return; // Ignore bot messages, edits, etc.
 
       const msg = message as any;
       if (!msg.user || !msg.ts) return; // Skip if missing required fields
+
+      // Acknowledge receipt with thumbs up
+      this.addReaction(msg.channel, msg.ts);
 
       const chatJid = `slack-dm:${msg.user}`;
       const content = (msg.text || '').trim();
@@ -57,6 +71,9 @@ export class SlackChannel implements Channel {
     this.app.event('app_mention', async ({ event }) => {
       if (!event.user || !event.ts || !event.channel) return; // Skip if missing required fields
 
+      // Acknowledge receipt with thumbs up
+      this.addReaction(event.channel, event.ts);
+
       const chatJid = `slack-channel:${event.channel}`;
       const content = (event.text || '').trim();
       const timestamp = new Date(parseFloat(event.ts) * 1000).toISOString();
@@ -78,10 +95,78 @@ export class SlackChannel implements Channel {
     });
   }
 
+  private addReaction(channel: string, timestamp: string): void {
+    this.app.client.reactions.add({
+      channel,
+      timestamp,
+      name: 'thumbsup',
+    }).catch(err => {
+      logger.warn({ err, channel, timestamp }, 'Failed to add reaction');
+    });
+  }
+
+  private attachSocketListeners(): void {
+    const receiver = (this.app as any).receiver;
+    const client = receiver?.client;
+    if (!client) {
+      logger.warn('Could not access Slack SocketModeClient for monitoring');
+      return;
+    }
+
+    // SocketModeClient emits state events: 'connected', 'reconnecting', 'disconnected'
+    client.on('reconnecting', () => {
+      logger.warn('Slack socket reconnecting (built-in)');
+    });
+
+    client.on('connected', () => {
+      logger.info('Slack socket connected');
+      this.connected = true;
+      this.reconnectAttempts = 0;
+    });
+
+    // 'disconnected' means the built-in reconnect gave up
+    client.on('disconnected', () => {
+      logger.error('Slack socket fully disconnected (built-in reconnect exhausted)');
+      this.connected = false;
+      if (!this.intentionalDisconnect) {
+        this.opts.onConnectionStatus?.('slack', 'disconnected', 'Socket disconnected');
+        this.scheduleReconnect();
+      }
+    });
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer || this.intentionalDisconnect) return;
+
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+    this.reconnectAttempts++;
+    logger.info({ delay, attempt: this.reconnectAttempts }, 'Scheduling Slack reconnect');
+
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = undefined;
+      try {
+        try { await this.app.stop(); } catch { /* ignore */ }
+
+        this.createApp();
+        await this.app.start();
+        this.attachSocketListeners();
+        this.connected = true;
+        this.reconnectAttempts = 0;
+        logger.info('Slack reconnected successfully');
+        this.opts.onConnectionStatus?.('slack', 'connected', 'Reconnected');
+      } catch (err) {
+        logger.error({ err, attempt: this.reconnectAttempts }, 'Slack reconnect failed');
+        this.scheduleReconnect();
+      }
+    }, delay);
+  }
+
   async connect(): Promise<void> {
     try {
       await this.app.start();
+      this.attachSocketListeners();
       this.connected = true;
+      this.reconnectAttempts = 0;
       logger.info('Connected to Slack');
     } catch (err) {
       logger.error({ err }, 'Failed to connect to Slack');
@@ -128,6 +213,11 @@ export class SlackChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    this.intentionalDisconnect = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
     try {
       await this.app.stop();
       this.connected = false;
