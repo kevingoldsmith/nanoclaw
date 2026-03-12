@@ -42,14 +42,21 @@ You have access to Joplin notes via MCP tools (`mcp__joplin__*`). Use these to s
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
-## Memory
+## Memory & Session Rotation
 
-The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
+Your conversation session is reset every Sunday at 4am. This is intentional — it keeps your context window fresh and prevents compaction from degrading data quality over time. After a reset, you start with a clean session but retain all persistent storage.
+
+When you need context from before the last reset:
+- Search `conversations/` — archived transcripts of all past conversations, fully searchable
+- Read files you've created in `/workspace/group/` — notes, research, structured data
+- Check your CLAUDE.md — persistent memory you've written for yourself
 
 When you learn something important:
 - Create files for structured data (e.g., `customers.md`, `preferences.md`)
 - Split files larger than 500 lines into folders
 - Keep an index in your memory for the files you create
+
+Do NOT tell the user "I don't have context from before" — instead, search your archives and files to find what you need.
 
 ## Message Formatting
 

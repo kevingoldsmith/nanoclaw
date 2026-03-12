@@ -68,6 +68,13 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS archived_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      started_at TEXT,
+      archived_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -503,6 +510,40 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+/**
+ * Archive the current session for a group and clear it so the next
+ * agent invocation starts a fresh session.
+ * Returns the archived session ID, or null if there was no active session.
+ */
+export function rotateSession(groupFolder: string, startedAt?: string): string | null {
+  const current = getSession(groupFolder);
+  if (!current) return null;
+
+  db.prepare(
+    `INSERT INTO archived_sessions (group_folder, session_id, started_at, archived_at)
+     VALUES (?, ?, ?, ?)`,
+  ).run(groupFolder, current, startedAt ?? null, new Date().toISOString());
+
+  db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+  return current;
+}
+
+export function getArchivedSessions(groupFolder: string): Array<{
+  session_id: string;
+  started_at: string | null;
+  archived_at: string;
+}> {
+  return db
+    .prepare(
+      'SELECT session_id, started_at, archived_at FROM archived_sessions WHERE group_folder = ? ORDER BY archived_at DESC',
+    )
+    .all(groupFolder) as Array<{
+    session_id: string;
+    started_at: string | null;
+    archived_at: string;
+  }>;
 }
 
 // --- Registered group accessors ---

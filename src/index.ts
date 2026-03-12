@@ -29,6 +29,7 @@ import {
   initDatabase,
   setRegisteredGroup,
   setRouterState,
+  rotateSession,
   setSession,
   storeChatMetadata,
   storeMessage,
@@ -226,6 +227,58 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   return true;
+}
+
+// --- Weekly session rotation ---
+
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function rotateSessions(): void {
+  logger.info('Weekly session rotation starting');
+  let rotated = 0;
+  for (const folder of Object.keys(sessions)) {
+    const archived = rotateSession(folder);
+    if (archived) {
+      delete sessions[folder];
+      rotated++;
+      logger.info({ folder, archivedSessionId: archived }, 'Session rotated');
+    }
+  }
+  logger.info({ rotated }, 'Weekly session rotation complete');
+
+  // Notify via all registered group channels
+  if (rotated > 0) {
+    const msg = `Weekly session reset complete — ${rotated} session${rotated > 1 ? 's' : ''} archived. Next conversation will start fresh.`;
+    for (const [jid] of Object.entries(registeredGroups)) {
+      const channel = findChannel(channels, jid);
+      if (channel) {
+        channel.sendMessage(jid, msg).catch((err) => {
+          logger.warn({ jid, err }, 'Failed to send session rotation notification');
+        });
+      }
+    }
+  }
+}
+
+function msUntilNext(dayOfWeek: number, hour: number): number {
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(hour, 0, 0, 0);
+  // Advance to the next matching day
+  const daysAhead = (dayOfWeek - now.getDay() + 7) % 7 || (now < target ? 0 : 7);
+  target.setDate(target.getDate() + daysAhead);
+  return target.getTime() - now.getTime();
+}
+
+function startSessionRotation(): void {
+  const delay = msUntilNext(0, 4); // Sunday 4am
+  const hours = Math.round(delay / 3_600_000);
+  logger.info(`Session rotation scheduled (4am every Sunday, first run in ~${hours}h)`);
+
+  setTimeout(() => {
+    rotateSessions();
+    setInterval(rotateSessions, ONE_WEEK_MS);
+  }, delay);
 }
 
 async function runAgent(
@@ -528,6 +581,11 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
   });
+  // Weekly session rotation: 4am every Sunday.
+  // Archives the current session ID and clears it so the next agent
+  // invocation starts fresh, preventing unbounded context growth.
+  startSessionRotation();
+
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
