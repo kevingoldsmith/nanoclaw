@@ -31,5 +31,6 @@ groups/global/*
 
 # Skills system (local per-installation state)
 .nanoclaw/
+skills_for_nanoclaw
 
 agents-sdk-docs
