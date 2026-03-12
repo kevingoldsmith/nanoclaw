@@ -85,6 +85,22 @@ async function runTask(
     return;
   }
 
+  // Advance next_run BEFORE running so the scheduler doesn't re-launch
+  // this task while it's still executing (tasks taking >60s would otherwise
+  // be found "due" again on the next poll).
+  let nextRun: string | null = null;
+  if (task.schedule_type === 'cron') {
+    const interval = CronExpressionParser.parse(task.schedule_value, {
+      tz: TIMEZONE,
+    });
+    nextRun = interval.next().toISOString();
+  } else if (task.schedule_type === 'interval') {
+    const ms = parseInt(task.schedule_value, 10);
+    nextRun = new Date(Date.now() + ms).toISOString();
+  }
+  // For 'once' tasks, set next_run to null so they won't be picked up again
+  updateTask(task.id, { next_run: nextRun });
+
   // Update tasks snapshot for container to read (filtered by group)
   const isMain = task.group_folder === MAIN_GROUP_FOLDER;
   const tasks = getAllTasks();
@@ -174,6 +190,18 @@ async function runTask(
 
   const durationMs = Date.now() - startTime;
 
+  // Notify the user if the task failed or timed out
+  if (error) {
+    const durationMin = Math.round(durationMs / 60000);
+    const shortPrompt = task.prompt.length > 80
+      ? task.prompt.slice(0, 80) + '...'
+      : task.prompt;
+    const failureMsg = `⚠️ Scheduled task failed after ${durationMin}min\nTask: ${shortPrompt}\nError: ${error}`;
+    deps.sendMessage(task.chat_jid, failureMsg).catch((sendErr) => {
+      logger.error({ taskId: task.id, sendErr }, 'Failed to send task failure notification');
+    });
+  }
+
   logTaskRun({
     task_id: task.id,
     run_at: new Date().toISOString(),
@@ -182,18 +210,6 @@ async function runTask(
     result,
     error,
   });
-
-  let nextRun: string | null = null;
-  if (task.schedule_type === 'cron') {
-    const interval = CronExpressionParser.parse(task.schedule_value, {
-      tz: TIMEZONE,
-    });
-    nextRun = interval.next().toISOString();
-  } else if (task.schedule_type === 'interval') {
-    const ms = parseInt(task.schedule_value, 10);
-    nextRun = new Date(Date.now() + ms).toISOString();
-  }
-  // 'once' tasks have no next run
 
   const resultSummary = error
     ? `Error: ${error}`

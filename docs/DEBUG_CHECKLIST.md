@@ -5,8 +5,8 @@
 ### 1. [FIXED] Resume branches from stale tree position
 When agent teams spawns subagent CLI processes, they write to the same session JSONL. On subsequent `query()` resumes, the CLI reads the JSONL but may pick a stale branch tip (from before the subagent activity), causing the agent's response to land on a branch the host never receives a `result` for. **Fix**: pass `resumeSessionAt` with the last assistant message UUID to explicitly anchor each resume.
 
-### 2. IDLE_TIMEOUT == CONTAINER_TIMEOUT (both 30 min)
-Both timers fire at the same time, so containers always exit via hard SIGKILL (code 137) instead of graceful `_close` sentinel shutdown. The idle timeout should be shorter (e.g., 5 min) so containers wind down between messages, while container timeout stays at 30 min as a safety net for stuck agents.
+### 2. [FIXED] IDLE_TIMEOUT == CONTAINER_TIMEOUT (both 30 min)
+IDLE_TIMEOUT lowered to 5 min (CONTAINER_TIMEOUT remains 30 min). Added heartbeat logging (60s) and silence watchdog (10min) inside agent-runner to detect stuck SDK queries. Host-side stall check logs warnings every 5 min when container produces no output.
 
 ### 3. Cursor advanced before agent succeeds
 `processGroupMessages` advances `lastAgentTimestamp` before the agent runs. If the container times out, retries find no messages (cursor already past them). Messages are permanently lost on timeout.

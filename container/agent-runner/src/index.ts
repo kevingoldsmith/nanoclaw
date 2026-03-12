@@ -58,6 +58,8 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const HEARTBEAT_INTERVAL_MS = 60_000; // Log heartbeat every 60s during query
+const QUERY_SILENCE_TIMEOUT_MS = 600_000; // Abort if SDK yields nothing for 10min
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -397,6 +399,31 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let lastMessageTime = Date.now();
+
+  // Heartbeat: log periodically so host-side can see the container is alive
+  const heartbeat = setInterval(() => {
+    const silenceMs = Date.now() - lastMessageTime;
+    log(`[heartbeat] alive, msgs=${messageCount}, results=${resultCount}, silence=${Math.round(silenceMs / 1000)}s`);
+  }, HEARTBEAT_INTERVAL_MS);
+
+  // Silence watchdog: if SDK yields nothing for too long, something is stuck
+  const silenceWatchdog = setInterval(() => {
+    const silenceMs = Date.now() - lastMessageTime;
+    if (silenceMs >= QUERY_SILENCE_TIMEOUT_MS) {
+      log(`[watchdog] SDK silent for ${Math.round(silenceMs / 1000)}s, aborting query`);
+      clearInterval(heartbeat);
+      clearInterval(silenceWatchdog);
+      // Exit with error — host will see non-zero exit and report failure
+      writeOutput({
+        status: 'error',
+        result: null,
+        newSessionId,
+        error: `SDK query timed out after ${Math.round(silenceMs / 1000)}s of silence`,
+      });
+      process.exit(1);
+    }
+  }, 30_000);
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -566,8 +593,24 @@ async function runQuery(
     }
   })) {
     messageCount++;
+    lastMessageTime = Date.now();
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
+
+    // Enhanced logging: show tool use details for assistant messages
+    let detail = '';
+    if (message.type === 'assistant' && 'message' in message) {
+      const msg = message as { message?: { content?: Array<{ type: string; name?: string; text?: string }> } };
+      const content = msg.message?.content;
+      if (Array.isArray(content)) {
+        const parts = content.map(c => {
+          if (c.type === 'tool_use') return `tool:${c.name}`;
+          if (c.type === 'text' && c.text) return `text(${c.text.length} chars)`;
+          return c.type;
+        });
+        detail = ` [${parts.join(', ')}]`;
+      }
+    }
+    log(`[msg #${messageCount}] type=${msgType}${detail}`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
@@ -596,6 +639,8 @@ async function runQuery(
   }
 
   ipcPolling = false;
+  clearInterval(heartbeat);
+  clearInterval(silenceWatchdog);
   log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }

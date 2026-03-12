@@ -371,6 +371,7 @@ export async function runContainerAgent(
               newSessionId = parsed.newSessionId;
             }
             hadStreamingOutput = true;
+            lastOutputTime = Date.now();
             // Activity detected — reset the hard timeout
             resetTimeout();
             // Call onOutput for all markers (including null results)
@@ -410,7 +411,18 @@ export async function runContainerAgent(
 
     let timedOut = false;
     let hadStreamingOutput = false;
+    let lastOutputTime = Date.now();
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+
+    // Log warning when container has been running long without output
+    const stallCheck = setInterval(() => {
+      const sinceOutput = Date.now() - lastOutputTime;
+      const total = Date.now() - startTime;
+      logger.warn(
+        { group: group.name, containerName, totalMs: total, silenceMs: sinceOutput },
+        `Container running ${Math.round(total / 60000)}min, no output for ${Math.round(sinceOutput / 60000)}min`,
+      );
+    }, 300_000); // Every 5 minutes
     // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
     const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
@@ -436,6 +448,7 @@ export async function runContainerAgent(
 
     container.on('close', (code) => {
       clearTimeout(timeout);
+      clearInterval(stallCheck);
       const duration = Date.now() - startTime;
 
       if (timedOut) {
@@ -627,6 +640,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
+      clearInterval(stallCheck);
       logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
       resolve({
         status: 'error',
