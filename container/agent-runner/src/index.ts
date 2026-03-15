@@ -197,6 +197,8 @@ const SECRET_ENV_VARS = [
   'SLACK_MCP_XOXC_TOKEN',
   'SLACK_MCP_XOXD_TOKEN',
   'JOPLIN_TOKEN',
+  'OPEN_BRAIN_KEY',
+  'OPEN_BRAIN_URL',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -478,7 +480,8 @@ async function runQuery(
         'mcp__drive_account2__*',
         'mcp__drive_account3__*',
         'mcp__distrokid_slack__*',
-        'mcp__joplin__*'
+        'mcp__joplin__*',
+        'mcp__open_brain__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -585,6 +588,13 @@ async function runQuery(
             },
           },
         } : {}),
+        ...(sdkEnv.OPEN_BRAIN_KEY && sdkEnv.OPEN_BRAIN_URL ? {
+          open_brain: {
+            type: 'http' as const,
+            url: sdkEnv.OPEN_BRAIN_URL,
+            headers: { 'x-brain-key': sdkEnv.OPEN_BRAIN_KEY },
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
@@ -635,6 +645,10 @@ async function runQuery(
         result: textResult || null,
         newSessionId
       });
+      // End the input stream so the SDK closes the async iterable.
+      // Without this, the for-await loop hangs until the watchdog kills us.
+      // The outer loop (main) will create a fresh stream for the next query.
+      stream.end();
     }
   }
 
