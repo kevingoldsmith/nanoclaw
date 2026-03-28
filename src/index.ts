@@ -271,7 +271,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     // Progress updates — streamed to thread if channel supports it
     if (result.status === 'progress' && result.result) {
-      lastProgressText = result.result;
       logger.debug(
         { group: group.name },
         `Progress: ${result.result.slice(0, 100)}`,
@@ -286,6 +285,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           if (!progressThreadTs && threadId) {
             progressThreadTs = threadId;
           }
+          // Only mark as sent if delivery succeeded — prevents suppressing
+          // the final result when progress delivery fails (e.g. during watchdog abort)
+          lastProgressText = result.result;
         } catch (err) {
           logger.debug(
             { err, group: group.name },
