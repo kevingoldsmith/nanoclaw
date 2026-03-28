@@ -32,7 +32,7 @@ interface ContainerInput {
 }
 
 interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'progress';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -59,6 +59,8 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const HEARTBEAT_INTERVAL_MS = 60_000;
+const QUERY_SILENCE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -325,6 +327,27 @@ function waitForIpcMessage(): Promise<string | null> {
   });
 }
 
+function detectSkillModel(prompt: string): string | undefined {
+  const skillMatch = prompt.match(/\/([a-z0-9-]+)/);
+  if (!skillMatch) return undefined;
+  const skillName = skillMatch[1];
+  const skillPaths = [
+    `/workspace/group/.claude/skills/${skillName}/SKILL.md`,
+    `/workspace/skills/${skillName}/SKILL.md`,
+  ];
+  for (const skillPath of skillPaths) {
+    try {
+      const content = fs.readFileSync(skillPath, 'utf-8');
+      const modelMatch = content.match(/^model:\s*(.+)$/m);
+      if (modelMatch) {
+        log(`Detected skill model override: ${modelMatch[1].trim()} from ${skillPath}`);
+        return modelMatch[1].trim();
+      }
+    } catch { /* skill file not found */ }
+  }
+  return undefined;
+}
+
 /**
  * Run a single query and stream results via writeOutput.
  * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
@@ -338,6 +361,7 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
+  skillModel?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
   stream.push(prompt);
@@ -367,6 +391,8 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let lastAssistantText: string | null = null;
+  let lastMessageTime = Date.now();
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -390,6 +416,29 @@ async function runQuery(
   if (extraDirs.length > 0) {
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
+
+  const queryAbort = new AbortController();
+
+  const heartbeat = setInterval(() => {
+    const silenceMs = Date.now() - lastMessageTime;
+    log(`[heartbeat] alive, msgs=${messageCount}, results=${resultCount}, silence=${Math.round(silenceMs / 1000)}s`);
+  }, HEARTBEAT_INTERVAL_MS);
+
+  const silenceWatchdog = setInterval(() => {
+    const silenceMs = Date.now() - lastMessageTime;
+    if (silenceMs >= QUERY_SILENCE_TIMEOUT_MS) {
+      log(`[watchdog] SDK silent for ${Math.round(silenceMs / 1000)}s, aborting query`);
+      clearInterval(heartbeat);
+      clearInterval(silenceWatchdog);
+      queryAbort.abort();
+      writeOutput({
+        status: 'error',
+        result: lastAssistantText,
+        newSessionId,
+        error: `SDK query timed out after ${Math.round(silenceMs / 1000)}s of silence`,
+      });
+    }
+  }, 30_000);
 
   for await (const message of query({
     prompt: stream,
@@ -429,14 +478,29 @@ async function runQuery(
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
       },
+      ...(skillModel ? { model: skillModel } : {}),
     }
   })) {
     messageCount++;
+    lastMessageTime = Date.now();
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+    }
+
+    if (message.type === 'assistant' && message.message?.content) {
+      const parts = message.message.content;
+      if (Array.isArray(parts)) {
+        const textParts = parts.filter((p: any) => p.type === 'text').map((p: any) => p.text);
+        const text = textParts.join('').trim();
+        if (text.length >= 500) {
+          lastAssistantText = text;
+        } else if (text.length >= 20) {
+          writeOutput({ status: 'progress', result: text });
+        }
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -452,15 +516,18 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      const finalResult = textResult || lastAssistantText;
+      log(`Result #${resultCount}: subtype=${message.subtype}${finalResult ? ` text=${finalResult.slice(0, 200)}` : ''}`);
       writeOutput({
         status: 'success',
-        result: textResult || null,
+        result: finalResult || null,
         newSessionId
       });
     }
   }
 
+  clearInterval(heartbeat);
+  clearInterval(silenceWatchdog);
   ipcPolling = false;
   log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
@@ -576,13 +643,19 @@ async function main(): Promise<void> {
     prompt = `[SCHEDULED TASK]\n\nScript output:\n${JSON.stringify(scriptResult.data, null, 2)}\n\nInstructions:\n${containerInput.prompt}`;
   }
 
+  // Detect skill model override from prompt
+  const skillModel = detectSkillModel(prompt);
+  if (skillModel) {
+    log(`Using skill model override: ${skillModel}`);
+  }
+
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, skillModel);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
