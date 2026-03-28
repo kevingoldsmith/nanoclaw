@@ -296,10 +296,10 @@ nanoclaw/
 │
 ├── groups/
 │   ├── CLAUDE.md                  # Global memory (all groups read this)
-│   ├── {channel}_main/             # Main control channel (e.g., whatsapp_main/)
+│   ├── main/                       # Main control group (always called "main")
 │   │   ├── CLAUDE.md              # Main channel memory
 │   │   └── logs/                  # Task execution logs
-│   └── {channel}_{group-name}/    # Per-group folders (created on registration)
+│   └── {group-name}/              # Per-group folders (e.g., slack-main, whatsapp_dev-team)
 │       ├── CLAUDE.md              # Group-specific memory
 │       ├── logs/                  # Task logs for this group
 │       └── *.md                   # Files created by the agent
@@ -376,7 +376,7 @@ setRegisteredGroup("1234567890@g.us", {
 });
 ```
 
-Folder names follow the convention `{channel}_{group-name}` (e.g., `whatsapp_family-chat`, `telegram_dev-team`). The main group has `isMain: true` set during registration.
+Folder names vary by channel: the main control group always uses `main` regardless of channel, while other groups typically use descriptive names like `slack-main` or `whatsapp_dev-team`. The main group has `isMain: true` set during registration.
 
 Additional mounts appear at `/workspace/extra/{containerPath}` inside the container.
 
