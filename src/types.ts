@@ -91,6 +91,8 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: send a message in a thread/reply. Returns the thread ID if created.
+  sendThreadedMessage?(jid: string, text: string, threadId?: string): Promise<string | undefined>;
 }
 
 // Callback type that channels use to deliver inbound messages
@@ -106,3 +108,7 @@ export type OnChatMetadata = (
   channel?: string,
   isGroup?: boolean,
 ) => void;
+
+// Connection status events for cross-channel notifications
+export type ConnectionStatusEvent = 'connected' | 'disconnected' | 'auth_required';
+export type OnConnectionStatus = (channelName: string, status: ConnectionStatusEvent, message?: string) => void;
