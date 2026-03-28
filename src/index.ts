@@ -281,9 +281,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  let lastProgressText = '';
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
+
+    // Progress updates — streamed to thread if channel supports it
+    if (result.status === 'progress' && result.result) {
+      lastProgressText = result.result;
+      logger.debug({ group: group.name }, `Progress: ${result.result.slice(0, 100)}`);
+      // Progress threading will be added when sendThreadedMessage is wired (Task 9)
+      return;
+    }
+
     if (result.result) {
       const raw =
         typeof result.result === 'string'
@@ -291,6 +301,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           : JSON.stringify(result.result);
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      // Skip if identical to last progress (already sent)
+      if (text && text === lastProgressText) {
+        logger.debug({ group: group.name }, 'Skipping duplicate result (same as progress)');
+        resetIdleTimer();
+        return;
+      }
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
         await channel.sendMessage(chatJid, text);

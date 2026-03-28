@@ -46,7 +46,7 @@ export interface ContainerInput {
 }
 
 export interface ContainerOutput {
-  status: 'success' | 'error';
+  status: 'success' | 'error' | 'progress';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -159,6 +159,18 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
+
+  // Also sync user's personal skills from skills_for_nanoclaw/
+  const customSkillsSrc = path.join(process.cwd(), 'skills_for_nanoclaw');
+  if (fs.existsSync(customSkillsSrc)) {
+    for (const skillDir of fs.readdirSync(customSkillsSrc)) {
+      const srcDir = path.join(customSkillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      fs.cpSync(srcDir, dstDir, { recursive: true });
+    }
+  }
+
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
