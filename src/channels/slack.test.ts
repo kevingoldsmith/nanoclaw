@@ -195,7 +195,7 @@ describe('Slack channel', () => {
           text: string,
           threadTs?: string,
         ): Promise<string | undefined>;
-      } & typeof channel;
+      } & ReturnType<typeof makeChannel>;
       await channel.sendThreadedMessage(
         'slack-channel:C01TEST',
         'reply text',
@@ -215,7 +215,7 @@ describe('Slack channel', () => {
           text: string,
           threadTs?: string,
         ): Promise<string | undefined>;
-      } & typeof channel;
+      } & ReturnType<typeof makeChannel>;
       const ts = await channel.sendThreadedMessage(
         'slack-channel:C01TEST',
         'msg',
