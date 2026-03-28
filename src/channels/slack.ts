@@ -3,6 +3,8 @@ import { SocketModeClient } from '@slack/socket-mode';
 import { Channel, NewMessage } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import { logger } from '../logger.js';
+import { saveMediaToGroup } from '../media.js';
+import { transcribeAudioBuffer } from '../transcription.js';
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -61,7 +63,9 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
   const botToken = process.env.SLACK_BOT_TOKEN;
 
   if (!appToken || !botToken) {
-    logger.debug('Slack channel disabled — SLACK_APP_TOKEN / SLACK_BOT_TOKEN not set');
+    logger.debug(
+      'Slack channel disabled — SLACK_APP_TOKEN / SLACK_BOT_TOKEN not set',
+    );
     return null;
   }
 
@@ -148,7 +152,9 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
       registerHandlers(app);
 
       // Extract the SocketModeClient from the new receiver
-      const receiver = (app as unknown as { receiver: { client?: SocketModeClient } }).receiver;
+      const receiver = (
+        app as unknown as { receiver: { client?: SocketModeClient } }
+      ).receiver;
       if (receiver?.client) {
         socketClient = receiver.client;
         attachSocketListeners(socketClient);
@@ -175,7 +181,11 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
         text?: string;
         ts: string;
         channel: string;
-        files?: Array<{ name?: string; url_private?: string; mimetype?: string }>;
+        files?: Array<{
+          name?: string;
+          url_private?: string;
+          mimetype?: string;
+        }>;
       };
 
       // Skip subtypes except file_share (which carries files with text)
@@ -201,13 +211,56 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
         // non-fatal
       }
 
-      // Build content — include file placeholders if present
+      // Build content — download and save files if present
       let content = msg.text ?? '';
       if (msg.files?.length) {
-        const fileLabels = msg.files
-          .map((f) => `[File: ${f.name ?? 'unknown'}]`)
-          .join(' ');
-        content = content ? `${content}\n${fileLabels}` : fileLabels;
+        const groups = opts.registeredGroups();
+        const group = groups[chatJid];
+        const fileLines: string[] = [];
+
+        for (const file of msg.files) {
+          const downloadUrl = file.url_private;
+          if (!downloadUrl || !group) {
+            fileLines.push(`[File: ${file.name ?? 'unknown'}]`);
+            continue;
+          }
+          try {
+            const buffer = await downloadSlackFile(downloadUrl, botToken!);
+            if (!buffer) {
+              fileLines.push(
+                `[File: ${file.name ?? 'unknown'} - download failed]`,
+              );
+              continue;
+            }
+            const mimetype = file.mimetype ?? 'application/octet-stream';
+            const saved = saveMediaToGroup(
+              buffer,
+              file.name ?? 'file',
+              mimetype,
+              group.folder,
+            );
+            fileLines.push(saved.contentLine);
+
+            if (mimetype.startsWith('audio/')) {
+              const transcript = await transcribeAudioBuffer(
+                buffer,
+                mimetype,
+                file.name,
+              );
+              if (transcript) {
+                fileLines.push(`[Transcript: ${transcript}]`);
+              }
+            }
+          } catch (err) {
+            logger.warn(
+              { err, fileName: file.name },
+              'Failed to process Slack file',
+            );
+            fileLines.push(`[File: ${file.name ?? 'unknown'} - error]`);
+          }
+        }
+        const filePart = fileLines.join('\n');
+        content = content ? `${content}\n${filePart}` : filePart;
       }
       if (!content.trim()) return;
 
@@ -244,13 +297,19 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
         text: string;
         ts: string;
         channel: string;
-        files?: Array<{ name?: string; url_private?: string; mimetype?: string }>;
+        files?: Array<{
+          name?: string;
+          url_private?: string;
+          mimetype?: string;
+        }>;
       };
 
       const userId = mentionEvent.user;
       const channelId = mentionEvent.channel;
       const chatJid = slackChannelJid(channelId);
-      const timestamp = new Date(parseFloat(mentionEvent.ts) * 1000).toISOString();
+      const timestamp = new Date(
+        parseFloat(mentionEvent.ts) * 1000,
+      ).toISOString();
 
       let senderName = userId;
       try {
@@ -266,10 +325,53 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
 
       let content = mentionEvent.text ?? '';
       if (mentionEvent.files?.length) {
-        const fileLabels = mentionEvent.files
-          .map((f) => `[File: ${f.name ?? 'unknown'}]`)
-          .join(' ');
-        content = content ? `${content}\n${fileLabels}` : fileLabels;
+        const groups = opts.registeredGroups();
+        const group = groups[chatJid];
+        const fileLines: string[] = [];
+
+        for (const file of mentionEvent.files) {
+          const downloadUrl = file.url_private;
+          if (!downloadUrl || !group) {
+            fileLines.push(`[File: ${file.name ?? 'unknown'}]`);
+            continue;
+          }
+          try {
+            const buffer = await downloadSlackFile(downloadUrl, botToken!);
+            if (!buffer) {
+              fileLines.push(
+                `[File: ${file.name ?? 'unknown'} - download failed]`,
+              );
+              continue;
+            }
+            const mimetype = file.mimetype ?? 'application/octet-stream';
+            const saved = saveMediaToGroup(
+              buffer,
+              file.name ?? 'file',
+              mimetype,
+              group.folder,
+            );
+            fileLines.push(saved.contentLine);
+
+            if (mimetype.startsWith('audio/')) {
+              const transcript = await transcribeAudioBuffer(
+                buffer,
+                mimetype,
+                file.name,
+              );
+              if (transcript) {
+                fileLines.push(`[Transcript: ${transcript}]`);
+              }
+            }
+          } catch (err) {
+            logger.warn(
+              { err, fileName: file.name },
+              'Failed to process Slack file',
+            );
+            fileLines.push(`[File: ${file.name ?? 'unknown'} - error]`);
+          }
+        }
+        const filePart = fileLines.join('\n');
+        content = content ? `${content}\n${filePart}` : filePart;
       }
       if (!content.trim()) return;
 
@@ -320,13 +422,19 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
   // ---- Channel interface ---------------------------------------------------
 
   const channel: Channel & {
-    sendThreadedMessage(jid: string, text: string, threadTs?: string): Promise<string | undefined>;
+    sendThreadedMessage(
+      jid: string,
+      text: string,
+      threadTs?: string,
+    ): Promise<string | undefined>;
   } = {
     name: 'slack',
 
     async connect(): Promise<void> {
       // Extract socket client from the receiver so we can attach listeners
-      const receiver = (app as unknown as { receiver: { client?: SocketModeClient } }).receiver;
+      const receiver = (
+        app as unknown as { receiver: { client?: SocketModeClient } }
+      ).receiver;
       if (receiver?.client) {
         socketClient = receiver.client;
         attachSocketListeners(socketClient);
