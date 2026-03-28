@@ -36,3 +36,7 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# local skills that I don't want in a public repo
+skills_for_nanoclaw/
+
