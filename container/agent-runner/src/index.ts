@@ -17,7 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFile } from 'child_process';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -185,6 +185,40 @@ function createPreCompactHook(assistantName?: string): HookCallback {
     }
 
     return {};
+  };
+}
+
+// Secrets to strip from Bash tool subprocess environments.
+// These are needed by claude-code for API auth but should never
+// be visible to commands the agent runs.
+const SECRET_ENV_VARS = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'TODOIST_API_TOKEN',
+  'SLACK_MCP_XOXC_TOKEN',
+  'SLACK_MCP_XOXD_TOKEN',
+  'JOPLIN_TOKEN',
+  'OPEN_BRAIN_KEY',
+  'OPEN_BRAIN_URL',
+  'FOURSQUARE_TOKEN',
+];
+
+function createSanitizeBashHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const command = (preInput.tool_input as { command?: string })?.command;
+    if (!command) return {};
+
+    const unsetPrefix = `unset ${SECRET_ENV_VARS.join(' ')} 2>/dev/null; `;
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        updatedInput: {
+          ...(preInput.tool_input as Record<string, unknown>),
+          command: unsetPrefix + command,
+        },
+      },
+    };
   };
 }
 
@@ -458,7 +492,26 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__todoist__*',
+        'mcp__foursquare__*',
+        'mcp__gmail_account1__*',
+        'mcp__gmail_account2__*',
+        'mcp__gmail_account3__*',
+        'mcp__calendar_account1__*',
+        'mcp__calendar_account2__*',
+        'mcp__calendar_account3__*',
+        'mcp__drive_account1__*',
+        'mcp__drive_account2__*',
+        'mcp__drive_account3__*',
+        'mcp__joplin__*',
+        'mcp__distrokid_slack__*',
+        'mcp__open_brain__*',
+        'mcp__family_calendar__*',
+        'mcp__home_maintenance__*',
+        'mcp__household_knowledge__*',
+        'mcp__meal_planning__*',
+        'mcp__professional_crm__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -474,9 +527,149 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ...(sdkEnv.TODOIST_API_TOKEN ? {
+          todoist: {
+            command: 'npx',
+            args: ['@greirson/mcp-todoist'],
+            env: { TODOIST_API_TOKEN: sdkEnv.TODOIST_API_TOKEN },
+          },
+        } : {}),
+        ...(sdkEnv.FOURSQUARE_TOKEN ? {
+          foursquare: {
+            command: 'node',
+            args: ['/app/mcp-servers/foursquare/dist/index.js'],
+            env: { FOURSQUARE_TOKEN: sdkEnv.FOURSQUARE_TOKEN },
+          },
+        } : {}),
+        gmail_account1: {
+          command: 'node',
+          args: ['/app/mcp-servers/gmail/dist/index.js'],
+          env: {
+            GMAIL_OAUTH_PATH: '/home/node/.gmail-account1/.gmail-mcp/gcp-oauth.keys.json',
+            GMAIL_CREDENTIALS_PATH: '/home/node/.gmail-account1/.gmail-mcp/credentials.json',
+          },
+        },
+        gmail_account2: {
+          command: 'node',
+          args: ['/app/mcp-servers/gmail/dist/index.js'],
+          env: {
+            GMAIL_OAUTH_PATH: '/home/node/.gmail-account2/.gmail-mcp/gcp-oauth.keys.json',
+            GMAIL_CREDENTIALS_PATH: '/home/node/.gmail-account2/.gmail-mcp/credentials.json',
+          },
+        },
+        gmail_account3: {
+          command: 'node',
+          args: ['/app/mcp-servers/gmail/dist/index.js'],
+          env: {
+            GMAIL_OAUTH_PATH: '/home/node/.gmail-account3/.gmail-mcp/gcp-oauth.keys.json',
+            GMAIL_CREDENTIALS_PATH: '/home/node/.gmail-account3/.gmail-mcp/credentials.json',
+          },
+        },
+        calendar_account1: {
+          command: 'npx',
+          args: ['-y', '@cocal/google-calendar-mcp'],
+          env: {
+            GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account1/gcp-oauth.keys.json',
+            GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account1/tokens.json',
+          },
+        },
+        calendar_account2: {
+          command: 'npx',
+          args: ['-y', '@cocal/google-calendar-mcp'],
+          env: {
+            GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account2/gcp-oauth.keys.json',
+            GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account2/tokens.json',
+          },
+        },
+        calendar_account3: {
+          command: 'npx',
+          args: ['-y', '@cocal/google-calendar-mcp'],
+          env: {
+            GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account3/gcp-oauth.keys.json',
+            GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account3/tokens.json',
+          },
+        },
+        drive_account1: {
+          command: 'npx',
+          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          env: {
+            GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account1/gcp-oauth.keys.json',
+            GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account1/tokens.json',
+          },
+        },
+        drive_account2: {
+          command: 'npx',
+          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          env: {
+            GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account2/gcp-oauth.keys.json',
+            GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account2/tokens.json',
+          },
+        },
+        drive_account3: {
+          command: 'npx',
+          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          env: {
+            GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account3/gcp-oauth.keys.json',
+            GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account3/tokens.json',
+          },
+        },
+        ...(sdkEnv.JOPLIN_TOKEN ? {
+          joplin: {
+            command: 'joplin-mcp-server',
+            args: [] as string[],
+            env: {
+              JOPLIN_TOKEN: sdkEnv.JOPLIN_TOKEN,
+              JOPLIN_HOST: 'host.docker.internal',
+              JOPLIN_PORT: '41184',
+            },
+          },
+        } : {}),
+        ...(sdkEnv.SLACK_MCP_XOXC_TOKEN && sdkEnv.SLACK_MCP_XOXD_TOKEN ? {
+          distrokid_slack: {
+            command: 'slack-mcp-server',
+            args: ['--transport', 'stdio'],
+            env: {
+              SLACK_MCP_XOXC_TOKEN: sdkEnv.SLACK_MCP_XOXC_TOKEN,
+              SLACK_MCP_XOXD_TOKEN: sdkEnv.SLACK_MCP_XOXD_TOKEN,
+            },
+          },
+        } : {}),
+        ...(sdkEnv.OPEN_BRAIN_KEY && sdkEnv.OPEN_BRAIN_URL ? {
+          open_brain: {
+            type: 'http' as const,
+            url: sdkEnv.OPEN_BRAIN_URL,
+            headers: { 'x-brain-key': sdkEnv.OPEN_BRAIN_KEY },
+          },
+          family_calendar: {
+            type: 'http' as const,
+            url: sdkEnv.OPEN_BRAIN_URL.replace('open-brain-mcp', 'family-calendar-mcp'),
+            headers: { 'x-access-key': sdkEnv.OPEN_BRAIN_KEY },
+          },
+          home_maintenance: {
+            type: 'http' as const,
+            url: sdkEnv.OPEN_BRAIN_URL.replace('open-brain-mcp', 'home-maintenance-mcp'),
+            headers: { 'x-access-key': sdkEnv.OPEN_BRAIN_KEY },
+          },
+          household_knowledge: {
+            type: 'http' as const,
+            url: sdkEnv.OPEN_BRAIN_URL.replace('open-brain-mcp', 'household-knowledge-mcp'),
+            headers: { 'x-access-key': sdkEnv.OPEN_BRAIN_KEY },
+          },
+          meal_planning: {
+            type: 'http' as const,
+            url: sdkEnv.OPEN_BRAIN_URL.replace('open-brain-mcp', 'meal-planning-mcp'),
+            headers: { 'x-access-key': sdkEnv.OPEN_BRAIN_KEY },
+          },
+          professional_crm: {
+            type: 'http' as const,
+            url: sdkEnv.OPEN_BRAIN_URL.replace('open-brain-mcp', 'professional-crm-mcp'),
+            headers: { 'x-access-key': sdkEnv.OPEN_BRAIN_KEY },
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
       },
       ...(skillModel ? { model: skillModel } : {}),
     }
