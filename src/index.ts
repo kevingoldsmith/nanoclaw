@@ -40,6 +40,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  rotateSession,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -296,12 +297,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       if (channel.sendThreadedMessage) {
         try {
-          const threadId = await channel.sendThreadedMessage(chatJid, result.result, progressThreadTs);
+          const threadId = await channel.sendThreadedMessage(
+            chatJid,
+            result.result,
+            progressThreadTs,
+          );
           if (!progressThreadTs && threadId) {
             progressThreadTs = threadId;
           }
         } catch (err) {
-          logger.debug({ err, group: group.name }, 'Failed to send progress thread');
+          logger.debug(
+            { err, group: group.name },
+            'Failed to send progress thread',
+          );
         }
       }
       return;
@@ -758,8 +766,35 @@ async function main(): Promise<void> {
       }
     },
   });
+  // Weekly session rotation: Sundays at 4am
+  function startSessionRotation(): void {
+    setInterval(() => {
+      const now = new Date();
+      if (
+        now.getDay() === 0 &&
+        now.getHours() === 4 &&
+        now.getMinutes() === 0
+      ) {
+        logger.info('Starting weekly session rotation');
+        for (const group of Object.values(registeredGroups)) {
+          try {
+            rotateSession(group.folder);
+            // Clear in-memory session cache
+            delete sessions[group.folder];
+          } catch (err) {
+            logger.error(
+              { err, group: group.folder },
+              'Failed to rotate session',
+            );
+          }
+        }
+      }
+    }, 60 * 1000); // Check every minute
+  }
+
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
+  startSessionRotation();
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

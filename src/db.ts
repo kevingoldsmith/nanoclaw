@@ -82,6 +82,13 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS archived_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      archived_at TEXT NOT NULL DEFAULT (datetime('now')),
+      reason TEXT
+    );
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -570,6 +577,27 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+export function rotateSession(groupFolder: string, reason = 'weekly'): void {
+  const session = getSession(groupFolder);
+  if (!session) return;
+
+  db.prepare(
+    'INSERT INTO archived_sessions (group_folder, session_id, reason) VALUES (?, ?, ?)',
+  ).run(groupFolder, session, reason);
+
+  db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+}
+
+export function getArchivedSessions(
+  groupFolder: string,
+): Array<{ session_id: string; archived_at: string; reason: string }> {
+  return db
+    .prepare(
+      'SELECT session_id, archived_at, reason FROM archived_sessions WHERE group_folder = ? ORDER BY archived_at DESC',
+    )
+    .all(groupFolder) as any[];
 }
 
 // --- Registered group accessors ---
