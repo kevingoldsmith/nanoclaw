@@ -12,18 +12,27 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
 | `src/channels/registry.ts` | Channel registry (self-registration at startup) |
+| `src/channels/slack.ts` | Slack channel (Socket Mode DMs and mentions) |
+| `src/credential-proxy.ts` | HTTP proxy that injects API credentials into container requests |
 | `src/ipc.ts` | IPC watcher and task processing |
 | `src/router.ts` | Message formatting and outbound routing |
 | `src/config.ts` | Trigger pattern, paths, intervals |
 | `src/container-runner.ts` | Spawns agent containers with mounts |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
+| `src/media.ts` | File upload handling (download, save, size limit) |
+| `src/transcription.ts` | Audio transcription via OpenAI Whisper |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `container/skills/` | Skills loaded inside agent containers (browser, status, formatting) |
+| `container/mcp-servers/foursquare/` | Foursquare/Swarm check-in MCP server (local) |
+| `container/mcp-servers/gmail/` | Gmail MCP server (local fork, auto-persists refreshed tokens) |
+| `skills_for_nanoclaw/` | User skills synced into containers on each spawn (source of truth) |
 
-## Secrets / Credentials / Proxy (OneCLI)
+## Secrets / Credentials / Proxy
 
-API keys, secret keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway — which handles secret injection into containers at request time, so no keys or tokens are ever passed to containers directly. Run `onecli --help`.
+API keys and OAuth tokens are managed by a native credential proxy (`src/credential-proxy.ts`). The proxy reads credentials from `.env` and injects them into container API requests — containers never see raw secrets. Supports both API key and OAuth (Claude subscription) modes.
+
+MCP integration secrets (Todoist, Foursquare, Joplin, etc.) are passed as container env vars, read from `.env` by the container runner.
 
 ## Skills
 
@@ -74,6 +83,34 @@ systemctl --user restart nanoclaw
 ## Troubleshooting
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
+
+## Skill Model Override
+
+Skills in `skills_for_nanoclaw/` can specify `model: claude-opus-4-6` (or any model string) in their SKILL.md frontmatter. The agent-runner detects skill references in the prompt, reads the frontmatter, and passes the model to the SDK `query()` call.
+
+## Progress Streaming
+
+Agent text messages are streamed back to the user as progress updates during long-running skills. Short text (20-500 chars) is emitted as `progress` status; longer text (500+ chars) is tracked as fallback for the final result. On Slack, progress messages go into a thread.
+
+## Agent-Runner Source Cache
+
+The agent-runner TypeScript source is cached per-group at `data/sessions/{group}/agent-runner-src/` and only copied on first run. After editing `container/agent-runner/src/`, you **must** clear the cache for changes to take effect:
+
+```bash
+rm -rf data/sessions/*/agent-runner-src
+```
+
+## Container Security
+
+Containers run with hardened defaults. Configure via `.env`:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CONTAINER_CAP_DROP` | `true` | Drop all Linux capabilities (`--cap-drop=ALL`) |
+| `CONTAINER_MEMORY_LIMIT` | `2g` | Container memory limit |
+| `CONTAINER_CPU_LIMIT` | `2` | Container CPU limit |
+
+IPC files from containers are limited to 1MB. Oversized files are moved to `data/ipc/errors/` for inspection. Outbound IPC messages are truncated at 50,000 characters.
 
 ## Container Build Cache
 
