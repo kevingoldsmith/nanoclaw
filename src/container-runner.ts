@@ -13,10 +13,10 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_MEMORY_LIMIT,
   CONTAINER_TIMEOUT,
-  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  ONECLI_URL,
   TIMEZONE,
 } from './config.js';
 import { readEnvFile } from './env.js';
@@ -28,8 +28,10 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
-import { detectAuthMode } from './credential-proxy.js';
+import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
+
+const onecli = new OneCLI({ url: ONECLI_URL });
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -321,23 +323,19 @@ async function buildContainerArgs(
     args.push('--cap-drop=ALL');
   }
 
-  // Credential proxy: tell container to send API requests through host proxy
-  const proxyHost = 'host.docker.internal';
-  const authMode = detectAuthMode();
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${proxyHost}:${CREDENTIAL_PROXY_PORT}`,
-  );
-  if (authMode === 'api-key') {
-    args.push('-e', `ANTHROPIC_API_KEY=placeholder`);
+  // OneCLI gateway handles credential injection — containers never see real secrets.
+  // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
+  const onecliApplied = await onecli.applyContainerConfig(args, {
+    addHostMapping: false, // Nanoclaw already handles host gateway
+  });
+  if (onecliApplied) {
+    logger.info({ containerName }, 'OneCLI gateway config applied');
   } else {
-    // OAuth mode: SDK does token exchange via the proxy
-    args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=placeholder`);
+    logger.warn(
+      { containerName },
+      'OneCLI gateway not reachable — container will have no credentials',
+    );
   }
-  logger.info(
-    { containerName, proxyHost, port: CREDENTIAL_PROXY_PORT, authMode },
-    'Credential proxy config applied',
-  );
 
   // Pass MCP secrets as container env vars (read from .env)
   const mcpSecrets = readEnvFile([

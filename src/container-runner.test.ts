@@ -14,7 +14,7 @@ vi.mock('./config.js', () => ({
   CONTAINER_MEMORY_LIMIT: '2g',
   CONTAINER_CPU_LIMIT: '2',
   CONTAINER_CAP_DROP: true,
-  CREDENTIAL_PROXY_PORT: 3001,
+  ONECLI_URL: 'http://localhost:10254',
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
@@ -47,6 +47,16 @@ vi.mock('fs', async () => {
       copyFileSync: vi.fn(),
     },
   };
+});
+
+// Mock @onecli-sh/sdk
+vi.mock('@onecli-sh/sdk', () => {
+  class OneCLI {
+    applyContainerConfig = vi.fn(async () => true);
+    ensureAgent = vi.fn(async () => ({ created: false }));
+    constructor(_opts: unknown) {}
+  }
+  return { OneCLI };
 });
 
 // Mock mount-security
