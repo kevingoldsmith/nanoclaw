@@ -23,14 +23,16 @@ This document describes the currently configured MCP integrations and how to add
 - "Show me completed tasks from this week"
 
 ### Gmail (3 accounts)
-**Package:** `@gongrzhe/server-gmail-autoauth-mcp`
+**Package:** Local fork at `container/mcp-servers/gmail/` (built into container image)
 **Type:** Stdio MCP (OAuth-based)
 **Mode:** Tool mode (read/send when asked via WhatsApp)
 
+**Key improvement over upstream:** Auto-persists refreshed OAuth tokens, so re-authentication is rarely needed.
+
 **Accounts configured:**
-1. **Account 1** (`gmail_account1`) - account1@example.com
-2. **Account 2** (`gmail_account2`) - account2@example.com
-3. **Account 3** (`gmail_account3`) - account3@example.com
+1. **Account 1** (`gmail_account1`) - kevin@nimbleautonomy.com (Nimble Autonomy)
+2. **Account 2** (`gmail_account2`) - kevin.goldsmith@gmail.com (Gmail)
+3. **Account 3** (`gmail_account3`) - kevin@distrokid.com (DistroKid)
 
 **Tools available per account:**
 - `search_emails` - Search with Gmail query syntax
@@ -61,6 +63,132 @@ This document describes the currently configured MCP integrations and how to add
 - Test users: all 3 email addresses added
 - Credentials downloaded and placed in each account directory
 
+**Authorization:**
+```bash
+GMAIL_OAUTH_PATH="$HOME/.gmail-mcp-account1/.gmail-mcp/gcp-oauth.keys.json" \
+  GMAIL_CREDENTIALS_PATH="$HOME/.gmail-mcp-account1/.gmail-mcp/credentials.json" \
+  npx tsx container/mcp-servers/gmail/src/index.ts auth
+```
+
+See [GMAIL-SETUP.md](GMAIL-SETUP.md) for full setup details.
+
+### Google Calendar (3 accounts)
+**Package:** `@cocal/google-calendar-mcp@2.6.1`
+**Type:** Stdio MCP (OAuth-based)
+**Configuration:** OAuth credentials via env vars (file path, not JSON content)
+
+**Accounts configured:**
+1. **Account 1** (`calendar_account1`) - kevin@nimbleautonomy.com (Nimble Autonomy)
+2. **Account 2** (`calendar_account2`) - kevin.goldsmith@gmail.com (Gmail)
+3. **Account 3** (`calendar_account3`) - kevin@distrokid.com (DistroKid)
+
+**Container env vars per account:**
+- `GOOGLE_OAUTH_CREDENTIALS` = `/home/node/.calendar-creds-accountN/gcp-oauth.keys.json`
+- `GOOGLE_CALENDAR_MCP_TOKEN_PATH` = `/home/node/.config/google-calendar-mcp-accountN/tokens.json`
+
+**Token storage (host):**
+```
+~/.config/google-calendar-mcp/tokens.json           # Account 1
+~/.config/google-calendar-mcp-account2/tokens.json  # Account 2
+~/.config/google-calendar-mcp-account3/tokens.json  # Account 3
+```
+
+**Authorization:**
+```bash
+# Account 1
+GOOGLE_OAUTH_CREDENTIALS="/Users/kevin/.gmail-mcp-account1/.gmail-mcp/gcp-oauth.keys.json" \
+  npx @cocal/google-calendar-mcp auth
+
+# Account 2
+GOOGLE_OAUTH_CREDENTIALS="/Users/kevin/.gmail-mcp-account2/.gmail-mcp/gcp-oauth.keys.json" \
+  GOOGLE_CALENDAR_MCP_TOKEN_PATH="/Users/kevin/.config/google-calendar-mcp-account2/tokens.json" \
+  npx @cocal/google-calendar-mcp auth
+```
+
+**Important:** `GOOGLE_OAUTH_CREDENTIALS` must be a file path, not JSON content.
+
+### Google Drive (3 accounts)
+**Package:** `@piotr-agier/google-drive-mcp@1.7.6`
+**Type:** Stdio MCP (OAuth-based)
+**Configuration:** Reuses same GCP OAuth credentials as Gmail/Calendar
+
+**Accounts configured:**
+1. **Account 1** (`drive_account1`) - kevin@nimbleautonomy.com
+2. **Account 2** (`drive_account2`) - kevin.goldsmith@gmail.com
+3. **Account 3** (`drive_account3`) - kevin@distrokid.com
+
+**Token storage (host):**
+```
+~/.config/google-drive-mcp-account1/tokens.json
+~/.config/google-drive-mcp-account2/tokens.json
+~/.config/google-drive-mcp-account3/tokens.json
+```
+
+**Authorization:**
+```bash
+GOOGLE_DRIVE_OAUTH_CREDENTIALS="$HOME/.gmail-mcp-accountN/.gmail-mcp/gcp-oauth.keys.json" \
+  GOOGLE_DRIVE_MCP_TOKEN_PATH="$HOME/.config/google-drive-mcp-accountN/tokens.json" \
+  npx @piotr-agier/google-drive-mcp auth
+```
+
+### Foursquare / Swarm
+**Package:** Local MCP server at `container/mcp-servers/foursquare/` (built into container image)
+**Type:** Stdio MCP (OAuth user token)
+**Configuration:** `.env` file → `FOURSQUARE_TOKEN`
+
+**API:** Foursquare v2 — free tier covers checkins, users, tips endpoints. Token is long-lived and does not expire.
+
+**Tools available:**
+- `get_last_checkin` - Fetch the most recent check-in
+- `get_recent_checkins` - Fetch recent check-ins (1–50, configurable count)
+
+**Container path:** `/app/mcp-servers/foursquare/dist/index.js`
+
+**Usage examples:**
+- "Where did I last check in on Swarm?"
+- "Show my recent check-ins"
+
+### Joplin Notes
+**Package:** `joplin-mcp-server@2.1.0`
+**Type:** Stdio MCP (API token + HTTP to Joplin desktop)
+**Configuration:** `.env` file → `JOPLIN_TOKEN`
+
+**Container env vars:**
+- `JOPLIN_TOKEN` — API token from Joplin desktop app
+- `JOPLIN_HOST` — `host.docker.internal` (reaches macOS host from container)
+- `JOPLIN_PORT` — `41184` (default Joplin API port)
+
+**Requirements:** Joplin desktop must be running on the host with the Web Clipper / API enabled.
+
+**Usage examples:**
+- "Search my Joplin notes for..."
+- "Create a note in Joplin"
+
+### DistroKid Slack
+**Package:** Binary at `container/bin/slack-mcp-server` (installed in container image)
+**Type:** Stdio MCP (xoxc/xoxd tokens)
+**Configuration:** `.env` file → `SLACK_MCP_XOXC_TOKEN`, `SLACK_MCP_XOXD_TOKEN`
+
+**Usage examples:**
+- "Check the #releases channel in Slack"
+- "What's been posted in Slack today?"
+
+### Open Brain (+ companion servers)
+**Type:** HTTP MCP servers (all share the same `OPEN_BRAIN_KEY` and base URL)
+**Configuration:** `.env` file → `OPEN_BRAIN_KEY`, `OPEN_BRAIN_URL`
+
+**Servers configured** (URLs derived by replacing `open-brain-mcp` in `OPEN_BRAIN_URL`):
+| MCP name | URL suffix | Purpose |
+|---|---|---|
+| `open_brain` | `open-brain-mcp` | Capture and search thoughts |
+| `family_calendar` | `family-calendar-mcp` | Family schedule |
+| `home_maintenance` | `home-maintenance-mcp` | Home maintenance tasks |
+| `household_knowledge` | `household-knowledge-mcp` | Household items and vendors |
+| `meal_planning` | `meal-planning-mcp` | Recipes and meal plans |
+| `professional_crm` | `professional-crm-mcp` | Professional contacts and follow-ups |
+
+All use `x-access-key` header except `open_brain` which uses `x-brain-key`.
+
 ## Adding New MCP Integrations
 
 ### 1. Install Package in Container
@@ -69,25 +197,35 @@ Edit `container/Dockerfile`:
 RUN npm install -g agent-browser @anthropic-ai/claude-code @greirson/mcp-todoist your-new-package
 ```
 
+For local MCP servers, add a `COPY` + build step instead:
+```dockerfile
+COPY mcp-servers/your-server /app/mcp-servers/your-server
+RUN cd /app/mcp-servers/your-server && npm install && npm run build
+```
+
 ### 2. Configure MCP Server in Agent Runner
 Edit `container/agent-runner/src/index.ts` in the `mcpServers` section:
 
 **For token-based MCPs:**
 ```typescript
-yourService: {
-  command: 'npx',
-  args: ['-y', 'your-mcp-package'],
-  env: { YOUR_API_TOKEN: sdkEnv.YOUR_API_TOKEN },
-},
+...(sdkEnv.YOUR_API_TOKEN ? {
+  yourService: {
+    command: 'npx',
+    args: ['-y', 'your-mcp-package'],
+    env: { YOUR_API_TOKEN: sdkEnv.YOUR_API_TOKEN },
+  },
+} : {}),
 ```
 
-**For OAuth/credential-based MCPs:**
+**For HTTP MCPs:**
 ```typescript
-yourService: {
-  command: 'npx',
-  args: ['-y', 'your-mcp-package'],
-  env: { HOME: '/path/to/credentials' },
-},
+...(sdkEnv.YOUR_KEY ? {
+  yourService: {
+    type: 'http' as const,
+    url: sdkEnv.YOUR_SERVICE_URL,
+    headers: { 'x-api-key': sdkEnv.YOUR_KEY },
+  },
+} : {}),
 ```
 
 ### 3. Add to Allowed Tools
@@ -110,12 +248,16 @@ if (fs.existsSync(credDir)) {
 ```
 
 ### 5. Pass Secrets (if needed)
-Edit `src/container-runner.ts` in `readSecrets()`:
+Edit `src/container-runner.ts` in `buildContainerArgs()` — add the key to the `readEnvFile()` call:
 ```typescript
-return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'YOUR_API_TOKEN']);
+const mcpSecrets = readEnvFile([
+  'TODOIST_API_TOKEN',
+  'YOUR_API_TOKEN',   // <-- add here
+  // ...
+]);
 ```
 
-Also add to `SECRET_ENV_VARS` in `container/agent-runner/src/index.ts`:
+Also add to `SECRET_ENV_VARS` in `container/agent-runner/src/index.ts` so the secret is stripped from Bash subprocess environments:
 ```typescript
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'YOUR_API_TOKEN'];
 ```
