@@ -28,11 +28,11 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `container/mcp-servers/gmail/` | Gmail MCP server (local fork, auto-persists refreshed tokens) |
 | `skills_for_nanoclaw/` | User skills synced into containers on each spawn (source of truth) |
 
-## Secrets / Credentials / Proxy
+## Secrets / Credentials / Proxy (OneCLI)
 
-API keys and OAuth tokens are managed by a native credential proxy (`src/credential-proxy.ts`). The proxy reads credentials from `.env` and injects them into container API requests — containers never see raw secrets. Supports both API key and OAuth (Claude subscription) modes.
+API keys, secret keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway — which handles secret injection into containers at request time, so no keys or tokens are ever passed to containers directly. A legacy credential proxy (`src/credential-proxy.ts`) exists as a fallback.
 
-MCP integration secrets (Todoist, Foursquare, Joplin, etc.) are passed as container env vars, read from `.env` by the container runner.
+MCP integration secrets (Todoist, Foursquare, Joplin, etc.) are passed as container env vars, read from `.env` by the container runner. These are not routed through OneCLI since MCP servers read them from environment variables, not HTTP requests.
 
 ## Skills
 
