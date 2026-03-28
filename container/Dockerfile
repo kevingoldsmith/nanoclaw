@@ -48,6 +48,30 @@ COPY agent-runner/ ./
 # Build TypeScript
 RUN npm run build
 
+# MCP servers (pinned versions)
+RUN npm install -g @greirson/mcp-todoist@1.0.3 \
+    @cocal/google-calendar-mcp@2.6.1 \
+    @piotr-agier/google-drive-mcp@1.7.6 \
+    joplin-mcp-server@2.1.0
+
+# Joplin logs directory (writable)
+RUN mkdir -p /home/node/.config/joplin-mcp && chown node:node /home/node/.config/joplin-mcp
+
+# DistroKid Slack MCP binary
+COPY container/bin/slack-mcp-server /usr/local/bin/slack-mcp-server
+RUN chmod +x /usr/local/bin/slack-mcp-server
+
+# Local MCP servers: Foursquare
+COPY container/mcp-servers/foursquare /app/mcp-servers/foursquare
+RUN cd /app/mcp-servers/foursquare && npm ci && npm run build
+
+# Local MCP servers: Gmail (local fork)
+COPY container/mcp-servers/gmail /app/mcp-servers/gmail
+RUN cd /app/mcp-servers/gmail && npm ci && npm run build
+
+# Create config directory for Drive tokens
+RUN mkdir -p /home/node/.config && chown node:node /home/node/.config
+
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 
