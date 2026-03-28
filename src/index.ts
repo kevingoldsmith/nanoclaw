@@ -2,19 +2,18 @@ import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 
-import { OneCLI } from '@onecli-sh/sdk';
-
 import {
   ASSISTANT_NAME,
+  CREDENTIAL_PROXY_PORT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
-  ONECLI_URL,
   POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
+import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -63,7 +62,13 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, ConnectionStatusEvent, NewMessage, OnConnectionStatus, RegisteredGroup } from './types.js';
+import {
+  Channel,
+  ConnectionStatusEvent,
+  NewMessage,
+  OnConnectionStatus,
+  RegisteredGroup,
+} from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -77,27 +82,6 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
-
-const onecli = new OneCLI({ url: ONECLI_URL });
-
-function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
-  if (group.isMain) return;
-  const identifier = group.folder.toLowerCase().replace(/_/g, '-');
-  onecli.ensureAgent({ name: group.name, identifier }).then(
-    (res) => {
-      logger.info(
-        { jid, identifier, created: res.created },
-        'OneCLI agent ensured',
-      );
-    },
-    (err) => {
-      logger.debug(
-        { jid, identifier, err: String(err) },
-        'OneCLI agent ensure skipped',
-      );
-    },
-  );
-}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -179,9 +163,6 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
       logger.info({ folder: group.folder }, 'Created CLAUDE.md from template');
     }
   }
-
-  // Ensure a corresponding OneCLI agent exists (best-effort, non-blocking)
-  ensureOneCLIAgent(jid, group);
 
   logger.info(
     { jid, name: group.name, folder: group.folder },
@@ -356,12 +337,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // If we already sent output to the user, don't roll back the cursor —
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
-      logger.info({ group: group.name }, 'Agent errored but output was already sent to user');
+      logger.info(
+        { group: group.name },
+        'Agent errored but output was already sent to user',
+      );
       return true;
     }
     // Notify user on error
     try {
-      await channel.sendMessage(chatJid, 'Something went wrong while processing your message. Please try again.');
+      await channel.sendMessage(
+        chatJid,
+        'Something went wrong while processing your message. Please try again.',
+      );
     } catch (err) {
       logger.error({ err, chatJid }, 'Failed to send error notification');
     }
@@ -596,11 +583,8 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
-  // Ensure OneCLI agents exist for all registered groups.
-  // Recovers from missed creates (e.g. OneCLI was down at registration time).
-  for (const [jid, group] of Object.entries(registeredGroups)) {
-    ensureOneCLIAgent(jid, group);
-  }
+  // Start credential proxy before any containers can be spawned
+  await startCredentialProxy(CREDENTIAL_PROXY_PORT);
 
   restoreRemoteControl();
 
@@ -696,7 +680,11 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
   };
 
-  const onConnectionStatus: OnConnectionStatus = (channelName, status, message) => {
+  const onConnectionStatus: OnConnectionStatus = (
+    channelName,
+    status,
+    message,
+  ) => {
     const statusText = `[${channelName}] ${status}${message ? ': ' + message : ''}`;
     logger.info({ channelName, status }, statusText);
 
@@ -705,8 +693,11 @@ async function main(): Promise<void> {
       if (ch.name !== channelName && ch.isConnected()) {
         for (const [jid] of Object.entries(registeredGroups)) {
           if (ch.ownsJid(jid)) {
-            ch.sendMessage(jid, statusText).catch(err =>
-              logger.error({ err, channel: ch.name }, 'Failed to send health notification')
+            ch.sendMessage(jid, statusText).catch((err) =>
+              logger.error(
+                { err, channel: ch.name },
+                'Failed to send health notification',
+              ),
             );
             break;
           }
