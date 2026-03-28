@@ -162,11 +162,33 @@ server.tool(
     const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
 
     try {
-      if (!fs.existsSync(tasksFile)) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
+      // Read the snapshot written before this container started
+      let allTasks: Array<{ id: string; groupFolder: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string | null }> = [];
+      if (fs.existsSync(tasksFile)) {
+        allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
       }
 
-      const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
+      // Also read any tasks created during THIS session (pending IPC files)
+      // These won't be in the snapshot yet since it was written before the container started
+      if (fs.existsSync(TASKS_DIR)) {
+        const pendingFiles = fs.readdirSync(TASKS_DIR).filter((f) => f.endsWith('.json'));
+        for (const file of pendingFiles) {
+          try {
+            const data = JSON.parse(fs.readFileSync(path.join(TASKS_DIR, file), 'utf-8'));
+            if (data.type === 'schedule_task') {
+              allTasks.push({
+                id: `(pending-${file.replace('.json', '')})`,
+                groupFolder: isMain && data.targetJid ? data.createdBy || groupFolder : groupFolder,
+                prompt: data.prompt,
+                schedule_type: data.schedule_type,
+                schedule_value: data.schedule_value,
+                status: 'pending',
+                next_run: null,
+              });
+            }
+          } catch { /* skip malformed files */ }
+        }
+      }
 
       const tasks = isMain
         ? allTasks
@@ -178,7 +200,7 @@ server.tool(
 
       const formatted = tasks
         .map(
-          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
+          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string | null }) =>
             `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
         )
         .join('\n');

@@ -129,6 +129,12 @@ async function runTask(
     return;
   }
 
+  // Advance next_run BEFORE running so the scheduler doesn't re-launch
+  // this task while it's still executing (tasks taking >60s would otherwise
+  // be found "due" again on the next poll).
+  const advancedNextRun = computeNextRun(task);
+  updateTask(task.id, { next_run: advancedNextRun });
+
   // Update tasks snapshot for container to read (filtered by group)
   const isMain = group.isMain === true;
   const tasks = getAllTasks();
@@ -249,6 +255,32 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   }
   schedulerRunning = true;
   logger.info('Scheduler loop started');
+
+  // Clean up orphaned 'once' tasks: active with NULL next_run and past schedule_value.
+  // This happens when the scheduler sets next_run=null before execution (to prevent
+  // re-launch), but the process crashes before updateTaskAfterRun marks it completed.
+  const allTasks = getAllTasks();
+  const now = Date.now();
+  for (const task of allTasks) {
+    if (
+      task.schedule_type === 'once' &&
+      task.status === 'active' &&
+      task.next_run === null
+    ) {
+      const scheduledTime = new Date(task.schedule_value).getTime();
+      if (!isNaN(scheduledTime) && scheduledTime < now) {
+        updateTaskAfterRun(
+          task.id,
+          null,
+          'Orphaned task cleaned up on startup',
+        );
+        logger.warn(
+          { taskId: task.id, scheduledFor: task.schedule_value },
+          'Cleaned up orphaned once task (active with null next_run)',
+        );
+      }
+    }
+  }
 
   const loop = async () => {
     try {
