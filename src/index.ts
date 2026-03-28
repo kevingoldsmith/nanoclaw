@@ -282,6 +282,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
   let lastProgressText = '';
+  let progressThreadTs: string | undefined;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -289,8 +290,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // Progress updates — streamed to thread if channel supports it
     if (result.status === 'progress' && result.result) {
       lastProgressText = result.result;
-      logger.debug({ group: group.name }, `Progress: ${result.result.slice(0, 100)}`);
-      // Progress threading will be added when sendThreadedMessage is wired (Task 9)
+      logger.debug(
+        { group: group.name },
+        `Progress: ${result.result.slice(0, 100)}`,
+      );
+      if (channel.sendThreadedMessage) {
+        try {
+          const threadId = await channel.sendThreadedMessage(chatJid, result.result, progressThreadTs);
+          if (!progressThreadTs && threadId) {
+            progressThreadTs = threadId;
+          }
+        } catch (err) {
+          logger.debug({ err, group: group.name }, 'Failed to send progress thread');
+        }
+      }
       return;
     }
 
@@ -303,7 +316,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       // Skip if identical to last progress (already sent)
       if (text && text === lastProgressText) {
-        logger.debug({ group: group.name }, 'Skipping duplicate result (same as progress)');
+        logger.debug(
+          { group: group.name },
+          'Skipping duplicate result (same as progress)',
+        );
         resetIdleTimer();
         return;
       }
