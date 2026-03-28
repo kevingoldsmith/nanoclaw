@@ -1,13 +1,15 @@
 # Gmail Integration Setup Guide
 
-Complete setup guide for adding Gmail accounts to NanoClaw using `@gongrzhe/server-gmail-autoauth-mcp`.
+Complete setup guide for adding Gmail accounts to NanoClaw using the local fork at `container/mcp-servers/gmail/`.
+
+**Why a local fork?** The upstream `@gongrzhe/server-gmail-autoauth-mcp` package does not persist refreshed OAuth tokens, requiring frequent re-authentication. The local fork at `container/mcp-servers/gmail/` fixes this: it uses explicit credential paths via env vars and automatically writes refreshed tokens back to disk.
 
 ## Current Setup (2026-02-23)
 
 **3 Gmail accounts configured:**
-1. account1@example.com
-2. account2@example.com
-3. account3@example.com
+1. kevin@nimbleautonomy.com (Nimble Autonomy)
+2. kevin.goldsmith@gmail.com (Gmail)
+3. kevin@distrokid.com (DistroKid)
 
 **Mode:** Tool mode (read/send when asked via WhatsApp)
 
@@ -54,11 +56,8 @@ For each Gmail account, create this structure:
 
 ```bash
 mkdir -p ~/.gmail-mcp-account1/.gmail-mcp
-mkdir -p ~/.gmail-mcp-account1/.npm
 mkdir -p ~/.gmail-mcp-account2/.gmail-mcp
-mkdir -p ~/.gmail-mcp-account2/.npm
 mkdir -p ~/.gmail-mcp-account3/.gmail-mcp
-mkdir -p ~/.gmail-mcp-account3/.npm
 ```
 
 Copy OAuth credentials to each:
@@ -68,16 +67,15 @@ cp /path/to/gcp-oauth.keys.json ~/.gmail-mcp-account2/.gmail-mcp/
 cp /path/to/gcp-oauth.keys.json ~/.gmail-mcp-account3/.gmail-mcp/
 ```
 
-**Why `.npm/`?** The MCP package runs via `npx`, which needs a writable npm cache directory.
-
 ## OAuth Authorization (Per Account)
 
-Authorize each account separately:
+Authorize each account separately using the local fork directly. Run these from the NanoClaw project root:
 
 ### Account 1
 ```bash
-cd ~/.gmail-mcp-account1/.gmail-mcp
-npx -y @gongrzhe/server-gmail-autoauth-mcp auth
+GMAIL_OAUTH_PATH="$HOME/.gmail-mcp-account1/.gmail-mcp/gcp-oauth.keys.json" \
+  GMAIL_CREDENTIALS_PATH="$HOME/.gmail-mcp-account1/.gmail-mcp/credentials.json" \
+  npx tsx container/mcp-servers/gmail/src/index.ts auth
 ```
 - Browser opens → sign in with **first Gmail account**
 - If "Access blocked" appears → check test users list
@@ -86,15 +84,17 @@ npx -y @gongrzhe/server-gmail-autoauth-mcp auth
 
 ### Account 2
 ```bash
-cd ~/.gmail-mcp-account2/.gmail-mcp
-npx -y @gongrzhe/server-gmail-autoauth-mcp auth
+GMAIL_OAUTH_PATH="$HOME/.gmail-mcp-account2/.gmail-mcp/gcp-oauth.keys.json" \
+  GMAIL_CREDENTIALS_PATH="$HOME/.gmail-mcp-account2/.gmail-mcp/credentials.json" \
+  npx tsx container/mcp-servers/gmail/src/index.ts auth
 ```
 - Sign in with **second Gmail account**
 
 ### Account 3
 ```bash
-cd ~/.gmail-mcp-account3/.gmail-mcp
-npx -y @gongrzhe/server-gmail-autoauth-mcp auth
+GMAIL_OAUTH_PATH="$HOME/.gmail-mcp-account3/.gmail-mcp/gcp-oauth.keys.json" \
+  GMAIL_CREDENTIALS_PATH="$HOME/.gmail-mcp-account3/.gmail-mcp/credentials.json" \
+  npx tsx container/mcp-servers/gmail/src/index.ts auth
 ```
 - Sign in with **third Gmail account**
 
@@ -104,14 +104,16 @@ After authorization, each directory should have:
 ├── .gmail-mcp/
 │   ├── credentials.json       ← Created during auth
 │   └── gcp-oauth.keys.json    ← You copied this
-└── .npm/                       ← npm cache
 ```
 
 ## Code Integration
 
 ### 1. Container Image (`container/Dockerfile`)
+
+The local fork is copied and built during the container image build — it is not installed from npm:
 ```dockerfile
-RUN npm install -g agent-browser @anthropic-ai/claude-code @greirson/mcp-todoist @gongrzhe/server-gmail-autoauth-mcp
+COPY mcp-servers/gmail /app/mcp-servers/gmail
+RUN cd /app/mcp-servers/gmail && npm install && npm run build
 ```
 
 ### 2. Mount Credentials (`src/container-runner.ts`)
@@ -124,7 +126,7 @@ for (let i = 1; i <= 3; i++) {
     mounts.push({
       hostPath: gmailDir,
       containerPath: `/home/node/.gmail-account${i}`,
-      readonly: false, // MCP may need to refresh tokens and write npm cache
+      readonly: false, // MCP writes refreshed tokens
     });
   }
 }
@@ -136,19 +138,28 @@ mcpServers: {
   nanoclaw: { /* ... */ },
   todoist: { /* ... */ },
   gmail_account1: {
-    command: 'npx',
-    args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
-    env: { HOME: '/home/node/.gmail-account1' },
+    command: 'node',
+    args: ['/app/mcp-servers/gmail/dist/index.js'],
+    env: {
+      GMAIL_OAUTH_PATH: '/home/node/.gmail-account1/.gmail-mcp/gcp-oauth.keys.json',
+      GMAIL_CREDENTIALS_PATH: '/home/node/.gmail-account1/.gmail-mcp/credentials.json',
+    },
   },
   gmail_account2: {
-    command: 'npx',
-    args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
-    env: { HOME: '/home/node/.gmail-account2' },
+    command: 'node',
+    args: ['/app/mcp-servers/gmail/dist/index.js'],
+    env: {
+      GMAIL_OAUTH_PATH: '/home/node/.gmail-account2/.gmail-mcp/gcp-oauth.keys.json',
+      GMAIL_CREDENTIALS_PATH: '/home/node/.gmail-account2/.gmail-mcp/credentials.json',
+    },
   },
   gmail_account3: {
-    command: 'npx',
-    args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
-    env: { HOME: '/home/node/.gmail-account3' },
+    command: 'node',
+    args: ['/app/mcp-servers/gmail/dist/index.js'],
+    env: {
+      GMAIL_OAUTH_PATH: '/home/node/.gmail-account3/.gmail-mcp/gcp-oauth.keys.json',
+      GMAIL_CREDENTIALS_PATH: '/home/node/.gmail-account3/.gmail-mcp/credentials.json',
+    },
   },
 },
 ```
@@ -199,30 +210,28 @@ Or:
 ### "Access blocked" during OAuth
 → Add email address to test users in OAuth consent screen
 
-### "EACCES: permission denied" on npm cache
-→ Ensure `.npm/` directory exists on host: `mkdir -p ~/.gmail-mcp-accountN/.npm`
-
 ### "OAuth keys file not found"
-→ Credentials must be in `$HOME/.gmail-mcp/gcp-oauth.keys.json`
-→ Check mount path and HOME env var in MCP config
+→ Ensure `GMAIL_OAUTH_PATH` points to a valid file
+→ Check that the `.gmail-mcp-accountN` directory was created and credentials were copied
 
 ### Tools not available to agent
-→ Verify package in Dockerfile
+→ Verify the local fork is built in Dockerfile
 → Check allowedTools includes `mcp__gmail_accountN__*`
 → Clear agent-runner cache: `rm -rf data/sessions/*/agent-runner-src`
 → Restart service
 
 ### MCP fails to start in container
-→ Test manually: `docker exec [container] -e HOME=/home/node/.gmail-account1 npx @gongrzhe/server-gmail-autoauth-mcp`
+→ Test manually: `docker exec [container] node /app/mcp-servers/gmail/dist/index.js`
 → Check container mounts: `docker inspect [container] | grep -A 3 gmail`
 
 ## Token Refresh
 
-OAuth tokens may expire. To re-authorize:
+The local fork automatically refreshes and persists tokens. If a token expires or becomes invalid, re-authorize:
 ```bash
 rm ~/.gmail-mcp-accountN/.gmail-mcp/credentials.json
-cd ~/.gmail-mcp-accountN/.gmail-mcp
-npx -y @gongrzhe/server-gmail-autoauth-mcp auth
+GMAIL_OAUTH_PATH="$HOME/.gmail-mcp-accountN/.gmail-mcp/gcp-oauth.keys.json" \
+  GMAIL_CREDENTIALS_PATH="$HOME/.gmail-mcp-accountN/.gmail-mcp/credentials.json" \
+  npx tsx container/mcp-servers/gmail/src/index.ts auth
 ```
 
 ## Adding More Accounts
@@ -230,7 +239,7 @@ npx -y @gongrzhe/server-gmail-autoauth-mcp auth
 To add a 4th, 5th, etc. account:
 1. Create directory structure: `~/.gmail-mcp-account4/`
 2. Copy OAuth keys
-3. Authorize with new account
+3. Authorize with new account (using `npx tsx container/mcp-servers/gmail/src/index.ts auth` with appropriate env vars)
 4. Add to for loop in `container-runner.ts`
 5. Add MCP server config in `agent-runner/src/index.ts`
 6. Add to allowedTools
@@ -240,5 +249,5 @@ To add a 4th, 5th, etc. account:
 
 - Credentials stored in `~/.gmail-mcp-accountN/.gmail-mcp/credentials.json`
 - Not stored in `.env` or passed via environment variables
-- Mounted read-write so MCP can refresh tokens
+- Mounted read-write so MCP can refresh and persist tokens
 - Only accessible to container processes, not Bash subprocesses
