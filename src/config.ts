@@ -46,6 +46,11 @@ export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
   10,
 );
+export const CONTAINER_MEMORY_LIMIT =
+  process.env.CONTAINER_MEMORY_LIMIT || '2g';
+export const CONTAINER_CPU_LIMIT = process.env.CONTAINER_CPU_LIMIT || '2';
+export const CONTAINER_CAP_DROP =
+  (process.env.CONTAINER_CAP_DROP || 'true') === 'true';
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
   10,

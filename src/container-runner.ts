@@ -7,8 +7,11 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  CONTAINER_CAP_DROP,
+  CONTAINER_CPU_LIMIT,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
+  CONTAINER_MEMORY_LIMIT,
   CONTAINER_TIMEOUT,
   CREDENTIAL_PROXY_PORT,
   DATA_DIR,
@@ -16,6 +19,7 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -220,6 +224,70 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Gmail credentials for all 3 accounts (read-write for token refresh)
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  for (let i = 1; i <= 3; i++) {
+    const gmailDir = path.join(homeDir, `.gmail-mcp-account${i}`);
+    if (fs.existsSync(gmailDir)) {
+      mounts.push({
+        hostPath: gmailDir,
+        containerPath: `/home/node/.gmail-account${i}`,
+        readonly: false, // MCP may need to refresh tokens and write npm cache
+      });
+    }
+  }
+
+  // Calendar OAuth credentials (read-only, shared with Drive) and tokens (read-write)
+  for (let i = 1; i <= 3; i++) {
+    const gmailMcpDir = path.join(
+      homeDir,
+      `.gmail-mcp-account${i}`,
+      '.gmail-mcp',
+    );
+    if (fs.existsSync(gmailMcpDir)) {
+      mounts.push({
+        hostPath: gmailMcpDir,
+        containerPath: `/home/node/.calendar-creds-account${i}`,
+        readonly: true, // OAuth credentials are read-only
+      });
+    }
+
+    const calTokenPath =
+      i === 1
+        ? path.join(homeDir, '.config', 'google-calendar-mcp')
+        : path.join(homeDir, '.config', `google-calendar-mcp-account${i}`);
+    if (fs.existsSync(calTokenPath)) {
+      mounts.push({
+        hostPath: calTokenPath,
+        containerPath: `/home/node/.config/google-calendar-mcp-account${i}`,
+        readonly: false,
+      });
+    }
+
+    const driveTokenPath = path.join(
+      homeDir,
+      '.config',
+      `google-drive-mcp-account${i}`,
+    );
+    if (fs.existsSync(driveTokenPath)) {
+      mounts.push({
+        hostPath: driveTokenPath,
+        containerPath: `/home/node/.config/google-drive-mcp-account${i}`,
+        readonly: false,
+      });
+    }
+  }
+
+  // Host process logs (read-only) for security monitoring skills
+  const hostLogsDir = path.join(homeDir, 'Library', 'Logs', 'nanoclaw');
+  if (fs.existsSync(hostLogsDir)) {
+    mounts.push({
+      hostPath: hostLogsDir,
+      containerPath: '/workspace/host-logs',
+      readonly: true,
+    });
+  }
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -242,6 +310,17 @@ async function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // Resource limits — prevent containers from starving the host
+  args.push('--memory', CONTAINER_MEMORY_LIMIT);
+  args.push('--cpus', CONTAINER_CPU_LIMIT);
+  args.push('--pids-limit', '512');
+
+  // Drop all Linux capabilities. Toggle via CONTAINER_CAP_DROP=false in .env
+  // if containers fail with EPERM/seccomp errors (check logs for hints).
+  if (CONTAINER_CAP_DROP) {
+    args.push('--cap-drop=ALL');
+  }
+
   // Credential proxy: tell container to send API requests through host proxy
   const proxyHost = 'host.docker.internal';
   const authMode = detectAuthMode();
@@ -259,6 +338,21 @@ async function buildContainerArgs(
     { containerName, proxyHost, port: CREDENTIAL_PROXY_PORT, authMode },
     'Credential proxy config applied',
   );
+
+  // Pass MCP secrets as container env vars (read from .env)
+  const mcpSecrets = readEnvFile([
+    'TODOIST_API_TOKEN',
+    'FOURSQUARE_TOKEN',
+    'JOPLIN_TOKEN',
+    'SLACK_MCP_XOXC_TOKEN',
+    'SLACK_MCP_XOXD_TOKEN',
+    'OPEN_BRAIN_KEY',
+    'OPEN_BRAIN_URL',
+    'OPENAI_API_KEY',
+  ]);
+  for (const [key, value] of Object.entries(mcpSecrets)) {
+    if (value) args.push('-e', `${key}=${value}`);
+  }
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
