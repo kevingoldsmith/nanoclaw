@@ -58,15 +58,15 @@ RUN npm install -g @greirson/mcp-todoist@1.0.3 \
 RUN mkdir -p /home/node/.config/joplin-mcp && chown node:node /home/node/.config/joplin-mcp
 
 # DistroKid Slack MCP binary
-COPY container/bin/slack-mcp-server /usr/local/bin/slack-mcp-server
+COPY bin/slack-mcp-server /usr/local/bin/slack-mcp-server
 RUN chmod +x /usr/local/bin/slack-mcp-server
 
 # Local MCP servers: Foursquare
-COPY container/mcp-servers/foursquare /app/mcp-servers/foursquare
+COPY mcp-servers/foursquare /app/mcp-servers/foursquare
 RUN cd /app/mcp-servers/foursquare && npm ci && npm run build
 
 # Local MCP servers: Gmail (local fork)
-COPY container/mcp-servers/gmail /app/mcp-servers/gmail
+COPY mcp-servers/gmail /app/mcp-servers/gmail
 RUN cd /app/mcp-servers/gmail && npm ci && npm run build
 
 # Create config directory for Drive tokens
