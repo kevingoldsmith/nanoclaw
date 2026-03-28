@@ -63,7 +63,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, ConnectionStatusEvent, NewMessage, OnConnectionStatus, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -356,11 +356,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     // If we already sent output to the user, don't roll back the cursor —
     // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
-      logger.warn(
-        { group: group.name },
-        'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
-      );
+      logger.info({ group: group.name }, 'Agent errored but output was already sent to user');
       return true;
+    }
+    // Notify user on error
+    try {
+      await channel.sendMessage(chatJid, 'Something went wrong while processing your message. Please try again.');
+    } catch (err) {
+      logger.error({ err, chatJid }, 'Failed to send error notification');
     }
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
@@ -691,6 +694,25 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+  };
+
+  const onConnectionStatus: OnConnectionStatus = (channelName, status, message) => {
+    const statusText = `[${channelName}] ${status}${message ? ': ' + message : ''}`;
+    logger.info({ channelName, status }, statusText);
+
+    // Notify all OTHER connected channels
+    for (const ch of channels) {
+      if (ch.name !== channelName && ch.isConnected()) {
+        for (const [jid] of Object.entries(registeredGroups)) {
+          if (ch.ownsJid(jid)) {
+            ch.sendMessage(jid, statusText).catch(err =>
+              logger.error({ err, channel: ch.name }, 'Failed to send health notification')
+            );
+            break;
+          }
+        }
+      }
+    }
   };
 
   // Create and connect all registered channels.
