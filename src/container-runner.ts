@@ -24,6 +24,7 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
+import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -243,9 +244,21 @@ async function buildContainerArgs(
 
   // Credential proxy: tell container to send API requests through host proxy
   const proxyHost = 'host.docker.internal';
-  args.push('-e', `ANTHROPIC_BASE_URL=http://${proxyHost}:${CREDENTIAL_PROXY_PORT}`);
-  args.push('-e', `ANTHROPIC_API_KEY=placeholder`); // SDK needs a key, proxy replaces it
-  logger.info({ containerName, proxyHost, port: CREDENTIAL_PROXY_PORT }, 'Credential proxy config applied');
+  const authMode = detectAuthMode();
+  args.push(
+    '-e',
+    `ANTHROPIC_BASE_URL=http://${proxyHost}:${CREDENTIAL_PROXY_PORT}`,
+  );
+  if (authMode === 'api-key') {
+    args.push('-e', `ANTHROPIC_API_KEY=placeholder`);
+  } else {
+    // OAuth mode: SDK does token exchange via the proxy
+    args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=placeholder`);
+  }
+  logger.info(
+    { containerName, proxyHost, port: CREDENTIAL_PROXY_PORT, authMode },
+    'Credential proxy config applied',
+  );
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
