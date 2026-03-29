@@ -34,6 +34,10 @@ API keys, secret keys, OAuth tokens, and auth credentials are managed by the One
 
 MCP integration secrets (Todoist, Foursquare, Joplin, etc.) are passed as container env vars, read from `.env` by the container runner. These are not routed through OneCLI since MCP servers read them from environment variables, not HTTP requests.
 
+## MCP Server Selection
+
+When adding a new MCP integration, always check for an **official MCP server** published by the service provider before considering third-party packages. Official servers are maintained by the team that owns the API, so they stay current when API versions change. Search the provider's GitHub org and documentation first (e.g. `@doist/todoist-ai` for Todoist, not a community wrapper). Only use third-party packages when no official server exists.
+
 ## Skills
 
 Four types of skills exist in NanoClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxonomy and guidelines.
