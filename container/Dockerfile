@@ -49,7 +49,7 @@ COPY agent-runner/ ./
 RUN npm run build
 
 # MCP servers (pinned versions)
-RUN npm install -g @greirson/mcp-todoist@1.0.3 \
+RUN npm install -g @doist/todoist-ai@8.4.2 \
     @cocal/google-calendar-mcp@2.6.1 \
     @piotr-agier/google-drive-mcp@1.7.6 \
     joplin-mcp-server@2.1.0

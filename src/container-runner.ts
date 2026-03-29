@@ -339,7 +339,7 @@ async function buildContainerArgs(
 
   // Pass MCP secrets as container env vars (read from .env)
   const mcpSecrets = readEnvFile([
-    'TODOIST_API_TOKEN',
+    'TODOIST_API_KEY',
     'FOURSQUARE_TOKEN',
     'JOPLIN_TOKEN',
     'SLACK_MCP_XOXC_TOKEN',

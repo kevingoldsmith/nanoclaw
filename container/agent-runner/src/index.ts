@@ -194,7 +194,7 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 const SECRET_ENV_VARS = [
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
-  'TODOIST_API_TOKEN',
+  'TODOIST_API_KEY',
   'SLACK_MCP_XOXC_TOKEN',
   'SLACK_MCP_XOXD_TOKEN',
   'JOPLIN_TOKEN',
@@ -527,11 +527,11 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        ...(sdkEnv.TODOIST_API_TOKEN ? {
+        ...(sdkEnv.TODOIST_API_KEY ? {
           todoist: {
-            command: 'npx',
-            args: ['@greirson/mcp-todoist'],
-            env: { TODOIST_API_TOKEN: sdkEnv.TODOIST_API_TOKEN },
+            command: 'todoist-ai',
+            args: [],
+            env: { TODOIST_API_KEY: sdkEnv.TODOIST_API_KEY },
           },
         } : {}),
         ...(sdkEnv.FOURSQUARE_TOKEN ? {
