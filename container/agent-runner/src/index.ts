@@ -471,12 +471,33 @@ async function runQuery(
         newSessionId,
         error: `SDK query timed out after ${Math.round(silenceMs / 1000)}s of silence`,
       });
+      process.exit(1);
     }
   }, 30_000);
+
+  // Hard timeout fallback: if the event loop is blocked (e.g. MCP server init hanging),
+  // setInterval callbacks can't fire. This setTimeout acts as a backstop.
+  const hardTimeout = setTimeout(() => {
+    const silenceMs = Date.now() - lastMessageTime;
+    if (silenceMs >= QUERY_SILENCE_TIMEOUT_MS) {
+      log(`[hard-timeout] Event loop was blocked, silence=${Math.round(silenceMs / 1000)}s, aborting`);
+      clearInterval(heartbeat);
+      clearInterval(silenceWatchdog);
+      queryAbort.abort();
+      writeOutput({
+        status: 'error',
+        result: null,
+        newSessionId,
+        error: `SDK query hard-timed out after ${Math.round(silenceMs / 1000)}s (event loop blocked)`,
+      });
+      process.exit(1);
+    }
+  }, QUERY_SILENCE_TIMEOUT_MS + 5_000);
 
   for await (const message of query({
     prompt: stream,
     options: {
+      abortController: queryAbort,
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -716,11 +737,16 @@ async function runQuery(
         result: finalResult || null,
         newSessionId
       });
+      // End the input stream so the SDK closes the async iterable.
+      // Without this, the for-await loop hangs until the watchdog kills us.
+      // The outer loop (main) will create a fresh stream for the next query.
+      stream.end();
     }
   }
 
   clearInterval(heartbeat);
   clearInterval(silenceWatchdog);
+  clearTimeout(hardTimeout);
   ipcPolling = false;
   log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
   return { newSessionId, lastAssistantUuid, closedDuringQuery };

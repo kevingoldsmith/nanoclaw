@@ -28,11 +28,14 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `container/mcp-servers/gmail/` | Gmail MCP server (local fork, auto-persists refreshed tokens) |
 | `skills_for_nanoclaw/` | User skills synced into containers on each spawn (source of truth) |
 
-## Secrets / Credentials / Proxy (OneCLI)
+## Secrets / Credentials
 
-API keys, secret keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway — which handles secret injection into containers at request time, so no keys or tokens are ever passed to containers directly. A legacy credential proxy (`src/credential-proxy.ts`) exists as a fallback.
+Two auth modes for the Anthropic API, configured via `.env`:
 
-MCP integration secrets (Todoist, Foursquare, Joplin, etc.) are passed as container env vars, read from `.env` by the container runner. These are not routed through OneCLI since MCP servers read them from environment variables, not HTTP requests.
+- **API key mode** (`ANTHROPIC_API_KEY` set): Uses the credential proxy (`src/credential-proxy.ts`) on port 3001. Containers get `ANTHROPIC_BASE_URL` pointing to the proxy and a placeholder key; the proxy substitutes the real key at the transport layer.
+- **OAuth mode** (`CLAUDE_CODE_OAUTH_TOKEN` set, no API key): Token is passed directly to containers. The SDK handles OAuth auth internally (token exchange, refresh). The agent-runner's `createSanitizeBashHook` strips the token from Bash subprocesses. OAuth tokens are refreshed by Claude Code and stored in the macOS Keychain (`security find-generic-password -s "Claude Code-credentials" -w`). If the token in `.env` becomes stale, pull the fresh one from Keychain.
+
+MCP integration secrets (Todoist, Foursquare, Joplin, etc.) are passed as container env vars, read from `.env` by the container runner.
 
 ## MCP Server Selection
 

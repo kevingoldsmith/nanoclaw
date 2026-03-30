@@ -54,11 +54,11 @@ export function startCredentialProxy(
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
         } else {
-          if (headers['authorization']) {
-            delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
-            }
+          // OAuth mode: remove any API key and inject Bearer token
+          delete headers['x-api-key'];
+          delete headers['authorization'];
+          if (oauthToken) {
+            headers['authorization'] = `Bearer ${oauthToken}`;
           }
         }
 

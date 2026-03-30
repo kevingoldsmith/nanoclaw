@@ -13,10 +13,10 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_MEMORY_LIMIT,
   CONTAINER_TIMEOUT,
+  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
-  ONECLI_URL,
   TIMEZONE,
 } from './config.js';
 import { readEnvFile } from './env.js';
@@ -28,10 +28,7 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
-import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
-
-const onecli = new OneCLI({ url: ONECLI_URL });
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -323,18 +320,25 @@ async function buildContainerArgs(
     args.push('--cap-drop=ALL');
   }
 
-  // OneCLI gateway handles credential injection — containers never see real secrets.
-  // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
-  const onecliApplied = await onecli.applyContainerConfig(args, {
-    addHostMapping: false, // Nanoclaw already handles host gateway
-  });
-  if (onecliApplied) {
-    logger.info({ containerName }, 'OneCLI gateway config applied');
+  // Inject auth credentials into the container.
+  // API key mode: use credential proxy to avoid exposing the key directly.
+  // OAuth mode: pass token directly — the SDK handles OAuth auth internally
+  // (token exchange, refresh, etc.) and the agent-runner's sanitize hook
+  // strips it from Bash subprocesses.
+  const authSecrets = readEnvFile([
+    'ANTHROPIC_API_KEY',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+  ]);
+  if (authSecrets.ANTHROPIC_API_KEY) {
+    const proxyHost = 'host.docker.internal';
+    args.push('-e', `ANTHROPIC_BASE_URL=http://${proxyHost}:${CREDENTIAL_PROXY_PORT}`);
+    args.push('-e', `ANTHROPIC_API_KEY=placeholder`);
+    logger.info({ containerName, proxyHost, port: CREDENTIAL_PROXY_PORT }, 'Credential proxy config applied');
+  } else if (authSecrets.CLAUDE_CODE_OAUTH_TOKEN) {
+    args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${authSecrets.CLAUDE_CODE_OAUTH_TOKEN}`);
+    logger.info({ containerName }, 'OAuth token injected');
   } else {
-    logger.warn(
-      { containerName },
-      'OneCLI gateway not reachable — container will have no credentials',
-    );
+    logger.warn({ containerName }, 'No auth credentials found — container will have no API access');
   }
 
   // Pass MCP secrets as container env vars (read from .env)
@@ -481,7 +485,16 @@ export async function runContainerAgent(
             resetTimeout();
             // Call onOutput for all markers (including null results)
             // so idle timers start even for "silent" query completions.
-            outputChain = outputChain.then(() => onOutput(parsed));
+            // Catch errors so a single failed send doesn't break the chain
+            // and silently drop all subsequent messages.
+            outputChain = outputChain.then(() =>
+              onOutput(parsed).catch((err) => {
+                logger.error(
+                  { group: group.name, error: err },
+                  'onOutput callback failed',
+                );
+              }),
+            );
           } catch (err) {
             logger.warn(
               { group: group.name, error: err },
@@ -574,13 +587,21 @@ export async function runContainerAgent(
             { group: group.name, containerName, duration, code },
             'Container timed out after output (idle cleanup)',
           );
-          outputChain.then(() => {
-            resolve({
-              status: 'success',
-              result: null,
-              newSessionId,
+          outputChain
+            .then(() => {
+              resolve({
+                status: 'success',
+                result: null,
+                newSessionId,
+              });
+            })
+            .catch(() => {
+              resolve({
+                status: 'success',
+                result: null,
+                newSessionId,
+              });
             });
-          });
           return;
         }
 
@@ -688,7 +709,7 @@ export async function runContainerAgent(
 
       // Streaming mode: wait for output chain to settle, return completion marker
       if (onOutput) {
-        outputChain.then(() => {
+        const completeStreaming = () => {
           logger.info(
             { group: group.name, duration, newSessionId },
             'Container completed (streaming mode)',
@@ -698,7 +719,8 @@ export async function runContainerAgent(
             result: null,
             newSessionId,
           });
-        });
+        };
+        outputChain.then(completeStreaming).catch(completeStreaming);
         return;
       }
 

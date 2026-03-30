@@ -4,15 +4,16 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  CREDENTIAL_PROXY_PORT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
-  ONECLI_URL,
   POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
+import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -45,7 +46,6 @@ import {
   storeChatMetadata,
   storeMessage,
 } from './db.js';
-import { OneCLI } from '@onecli-sh/sdk';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -83,26 +83,6 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
-const onecli = new OneCLI({ url: ONECLI_URL });
-
-function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
-  if (group.isMain) return;
-  const identifier = group.folder.toLowerCase().replace(/_/g, '-');
-  onecli.ensureAgent({ name: group.name, identifier }).then(
-    (res) => {
-      logger.info(
-        { jid, identifier, created: res.created },
-        'OneCLI agent ensured',
-      );
-    },
-    (err) => {
-      logger.debug(
-        { jid, identifier, err: String(err) },
-        'OneCLI agent ensure skipped',
-      );
-    },
-  );
-}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -161,7 +141,6 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
-  ensureOneCLIAgent(jid, group);
 
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
@@ -291,13 +270,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
 
-    // Progress updates — streamed to thread if channel supports it
+    // Progress updates — streamed to thread for channels, regular message for DMs
+    // (threads in DMs hide messages from the user)
     if (result.status === 'progress' && result.result) {
       logger.debug(
         { group: group.name },
         `Progress: ${result.result.slice(0, 100)}`,
       );
-      if (channel.sendThreadedMessage) {
+      const isDm = chatJid.includes('dm:');
+      if (!isDm && channel.sendThreadedMessage) {
         try {
           const threadId = await channel.sendThreadedMessage(
             chatJid,
@@ -307,13 +288,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           if (!progressThreadTs && threadId) {
             progressThreadTs = threadId;
           }
-          // Only mark as sent if delivery succeeded — prevents suppressing
-          // the final result when progress delivery fails (e.g. during watchdog abort)
           lastProgressText = result.result;
         } catch (err) {
           logger.debug(
             { err, group: group.name },
             'Failed to send progress thread',
+          );
+        }
+      } else {
+        try {
+          await channel.sendMessage(chatJid, result.result);
+          lastProgressText = result.result;
+        } catch (err) {
+          logger.debug(
+            { err, group: group.name },
+            'Failed to send progress message',
           );
         }
       }
@@ -607,6 +596,9 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // Start credential proxy before any containers can be spawned
+  await startCredentialProxy(CREDENTIAL_PROXY_PORT);
+
   restoreRemoteControl();
 
   // Graceful shutdown handlers
@@ -824,12 +816,6 @@ async function main(): Promise<void> {
         }
       }
     }, 60 * 1000); // Check every minute
-  }
-
-  // Ensure OneCLI agents exist for all registered groups.
-  // Recovers from missed creates (e.g. OneCLI was down at registration time).
-  for (const [jid, group] of Object.entries(registeredGroups)) {
-    ensureOneCLIAgent(jid, group);
   }
 
   queue.setProcessMessagesFn(processGroupMessages);
