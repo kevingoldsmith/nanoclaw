@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -31,6 +31,31 @@ import {
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
+/**
+ * Read the current OAuth token from the macOS Keychain.
+ * Claude Code refreshes tokens and stores them in Keychain, so this
+ * is always fresher than any static .env value.
+ * Returns null on non-macOS or if Keychain read fails.
+ */
+function getOAuthToken(): string | null {
+  if (process.platform !== 'darwin') return null;
+  try {
+    const raw = execFileSync(
+      'security',
+      ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
+      { encoding: 'utf-8', timeout: 5000 },
+    ).trim();
+    const parsed = JSON.parse(raw);
+    const token = parsed?.claudeAiOauth?.accessToken;
+    if (token && typeof token === 'string') {
+      return token;
+    }
+  } catch {
+    // Keychain unavailable or no entry — fall back to .env
+  }
+  return null;
+}
+
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -44,6 +69,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  secrets?: Record<string, string>;
 }
 
 export interface ContainerOutput {
@@ -320,41 +346,8 @@ async function buildContainerArgs(
     args.push('--cap-drop=ALL');
   }
 
-  // Inject auth credentials into the container.
-  // API key mode: use credential proxy to avoid exposing the key directly.
-  // OAuth mode: pass token directly — the SDK handles OAuth auth internally
-  // (token exchange, refresh, etc.) and the agent-runner's sanitize hook
-  // strips it from Bash subprocesses.
-  const authSecrets = readEnvFile([
-    'ANTHROPIC_API_KEY',
-    'CLAUDE_CODE_OAUTH_TOKEN',
-  ]);
-  if (authSecrets.ANTHROPIC_API_KEY) {
-    const proxyHost = 'host.docker.internal';
-    args.push('-e', `ANTHROPIC_BASE_URL=http://${proxyHost}:${CREDENTIAL_PROXY_PORT}`);
-    args.push('-e', `ANTHROPIC_API_KEY=placeholder`);
-    logger.info({ containerName, proxyHost, port: CREDENTIAL_PROXY_PORT }, 'Credential proxy config applied');
-  } else if (authSecrets.CLAUDE_CODE_OAUTH_TOKEN) {
-    args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${authSecrets.CLAUDE_CODE_OAUTH_TOKEN}`);
-    logger.info({ containerName }, 'OAuth token injected');
-  } else {
-    logger.warn({ containerName }, 'No auth credentials found — container will have no API access');
-  }
-
-  // Pass MCP secrets as container env vars (read from .env)
-  const mcpSecrets = readEnvFile([
-    'TODOIST_API_KEY',
-    'FOURSQUARE_TOKEN',
-    'JOPLIN_TOKEN',
-    'SLACK_MCP_XOXC_TOKEN',
-    'SLACK_MCP_XOXD_TOKEN',
-    'OPEN_BRAIN_KEY',
-    'OPEN_BRAIN_URL',
-    'OPENAI_API_KEY',
-  ]);
-  for (const [key, value] of Object.entries(mcpSecrets)) {
-    if (value) args.push('-e', `${key}=${value}`);
-  }
+  // All secrets (auth + MCP) are passed via stdin, not env vars.
+  // See container.stdin.write block in runContainerAgent.
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
@@ -436,8 +429,32 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
+    // Pass secrets via stdin — never written to disk or exposed as env vars.
+    // Read OAuth token from Keychain (always fresh) with .env fallback.
+    const secretsEnv = readEnvFile([
+      'ANTHROPIC_API_KEY',
+      'CLAUDE_CODE_OAUTH_TOKEN',
+      'TODOIST_API_KEY',
+      'FOURSQUARE_TOKEN',
+      'JOPLIN_TOKEN',
+      'SLACK_MCP_XOXC_TOKEN',
+      'SLACK_MCP_XOXD_TOKEN',
+      'OPEN_BRAIN_KEY',
+      'OPEN_BRAIN_URL',
+      'OPENAI_API_KEY',
+    ]);
+    // Prefer fresh OAuth token from Keychain over potentially stale .env value
+    if (!secretsEnv.ANTHROPIC_API_KEY) {
+      const keychainToken = getOAuthToken();
+      if (keychainToken) {
+        secretsEnv.CLAUDE_CODE_OAUTH_TOKEN = keychainToken;
+      }
+    }
+    input.secrets = secretsEnv;
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
+    // Remove secrets from input so they don't appear in logs
+    delete input.secrets;
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';

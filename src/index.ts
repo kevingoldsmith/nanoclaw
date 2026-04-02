@@ -83,7 +83,6 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
-
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
   const agentTs = getRouterState('last_agent_timestamp');
@@ -596,8 +595,10 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
-  // Start credential proxy before any containers can be spawned
-  await startCredentialProxy(CREDENTIAL_PROXY_PORT);
+  // Start credential proxy only for API key mode (OAuth is handled via stdin secrets)
+  if (process.env.ANTHROPIC_API_KEY) {
+    await startCredentialProxy(CREDENTIAL_PROXY_PORT);
+  }
 
   restoreRemoteControl();
 
