@@ -31,29 +31,156 @@ import {
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
-/**
- * Read the current OAuth token from the macOS Keychain.
- * Claude Code refreshes tokens and stores them in Keychain, so this
- * is always fresher than any static .env value.
- * Returns null on non-macOS or if Keychain read fails.
- */
-function getOAuthToken(): string | null {
+/** OAuth token refresh endpoint (same as Claude Code uses). */
+const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
+const KEYCHAIN_SERVICE = 'Claude Code-credentials';
+
+interface KeychainOAuth {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  scopes?: string[];
+  subscriptionType?: string;
+  rateLimitTier?: string;
+}
+
+function readKeychainCredentials(): KeychainOAuth | null {
   if (process.platform !== 'darwin') return null;
   try {
     const raw = execFileSync(
       'security',
-      ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
+      ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
       { encoding: 'utf-8', timeout: 5000 },
     ).trim();
     const parsed = JSON.parse(raw);
-    const token = parsed?.claudeAiOauth?.accessToken;
-    if (token && typeof token === 'string') {
-      return token;
+    const oauth = parsed?.claudeAiOauth;
+    if (oauth?.accessToken && oauth?.refreshToken) {
+      return oauth as KeychainOAuth;
     }
   } catch {
-    // Keychain unavailable or no entry — fall back to .env
+    // Keychain unavailable or no entry
   }
   return null;
+}
+
+function writeKeychainCredentials(oauth: KeychainOAuth): void {
+  if (process.platform !== 'darwin') return;
+  try {
+    const payload = JSON.stringify({ claudeAiOauth: oauth });
+    // Delete then re-add (security cli doesn't support in-place update)
+    try {
+      execFileSync(
+        'security',
+        ['delete-generic-password', '-s', KEYCHAIN_SERVICE],
+        { timeout: 5000 },
+      );
+    } catch {
+      // May not exist yet
+    }
+    execFileSync(
+      'security',
+      [
+        'add-generic-password',
+        '-s',
+        KEYCHAIN_SERVICE,
+        '-a',
+        '',
+        '-w',
+        payload,
+        '-U',
+      ],
+      { timeout: 5000 },
+    );
+  } catch (err) {
+    logger.warn({ err }, 'Failed to write refreshed token to Keychain');
+  }
+}
+
+/**
+ * Refresh the OAuth token using the refresh token from Keychain.
+ * Updates Keychain with the new access+refresh tokens.
+ * Returns the new access token, or null on failure.
+ */
+async function refreshOAuthToken(creds: KeychainOAuth): Promise<string | null> {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 5000;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(OAUTH_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: creds.refreshToken,
+          client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+        }),
+      });
+
+      if (res.status === 429 && attempt < MAX_RETRIES) {
+        const retryAfter =
+          parseInt(res.headers.get('retry-after') || '', 10) * 1000 ||
+          RETRY_DELAY_MS * (attempt + 1);
+        logger.warn(
+          { attempt, retryAfterMs: retryAfter },
+          'OAuth refresh rate-limited, retrying',
+        );
+        await new Promise((r) => setTimeout(r, retryAfter));
+        continue;
+      }
+
+      if (!res.ok) {
+        logger.error(
+          { status: res.status, body: await res.text() },
+          'OAuth token refresh failed',
+        );
+        return null;
+      }
+      const data = (await res.json()) as {
+        access_token: string;
+        refresh_token: string;
+        expires_in: number;
+      };
+      const updated: KeychainOAuth = {
+        ...creds,
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt: Date.now() + data.expires_in * 1000,
+      };
+      writeKeychainCredentials(updated);
+      logger.info('OAuth token refreshed successfully');
+      return updated.accessToken;
+    } catch (err) {
+      if (attempt < MAX_RETRIES) {
+        logger.warn({ err, attempt }, 'OAuth refresh request failed, retrying');
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+        continue;
+      }
+      logger.error({ err }, 'OAuth token refresh request failed');
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Read the current OAuth token from the macOS Keychain.
+ * If the token is expired or near expiry, refresh it automatically
+ * using the stored refresh token.
+ * Returns null on non-macOS or if Keychain read fails.
+ */
+async function getOAuthToken(): Promise<string | null> {
+  const creds = readKeychainCredentials();
+  if (!creds) return null;
+
+  // Refresh if expired or expiring within 5 minutes
+  const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+  if (creds.expiresAt && Date.now() > creds.expiresAt - EXPIRY_BUFFER_MS) {
+    logger.info('OAuth token expired or near expiry, refreshing...');
+    return refreshOAuthToken(creds);
+  }
+
+  return creds.accessToken;
 }
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -417,6 +544,27 @@ export async function runContainerAgent(
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
+  // Read secrets and refresh OAuth token before spawning the container.
+  const secretsEnv = readEnvFile([
+    'ANTHROPIC_API_KEY',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'TODOIST_API_KEY',
+    'FOURSQUARE_TOKEN',
+    'JOPLIN_TOKEN',
+    'SLACK_MCP_XOXC_TOKEN',
+    'SLACK_MCP_XOXD_TOKEN',
+    'OPEN_BRAIN_KEY',
+    'OPEN_BRAIN_URL',
+    'OPENAI_API_KEY',
+  ]);
+  // Prefer fresh OAuth token from Keychain over potentially stale .env value
+  if (!secretsEnv.ANTHROPIC_API_KEY) {
+    const keychainToken = await getOAuthToken();
+    if (keychainToken) {
+      secretsEnv.CLAUDE_CODE_OAUTH_TOKEN = keychainToken;
+    }
+  }
+
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -429,27 +577,6 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    // Pass secrets via stdin — never written to disk or exposed as env vars.
-    // Read OAuth token from Keychain (always fresh) with .env fallback.
-    const secretsEnv = readEnvFile([
-      'ANTHROPIC_API_KEY',
-      'CLAUDE_CODE_OAUTH_TOKEN',
-      'TODOIST_API_KEY',
-      'FOURSQUARE_TOKEN',
-      'JOPLIN_TOKEN',
-      'SLACK_MCP_XOXC_TOKEN',
-      'SLACK_MCP_XOXD_TOKEN',
-      'OPEN_BRAIN_KEY',
-      'OPEN_BRAIN_URL',
-      'OPENAI_API_KEY',
-    ]);
-    // Prefer fresh OAuth token from Keychain over potentially stale .env value
-    if (!secretsEnv.ANTHROPIC_API_KEY) {
-      const keychainToken = getOAuthToken();
-      if (keychainToken) {
-        secretsEnv.CLAUDE_CODE_OAUTH_TOKEN = keychainToken;
-      }
-    }
     input.secrets = secretsEnv;
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
