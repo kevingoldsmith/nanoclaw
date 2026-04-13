@@ -4,6 +4,7 @@
  */
 import { ChildProcess, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -46,32 +47,47 @@ interface KeychainOAuth {
 
 function readKeychainCredentials(): KeychainOAuth | null {
   if (process.platform !== 'darwin') return null;
-  try {
-    const raw = execFileSync(
-      'security',
-      ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
-      { encoding: 'utf-8', timeout: 5000 },
-    ).trim();
-    const parsed = JSON.parse(raw);
-    const oauth = parsed?.claudeAiOauth;
-    if (oauth?.accessToken && oauth?.refreshToken) {
-      return oauth as KeychainOAuth;
+  // Try account-based entry first (written by Claude Code /login),
+  // then fall back to no-account entry (legacy NanoClaw writes).
+  const attempts: string[][] = [
+    [
+      'find-generic-password',
+      '-s',
+      KEYCHAIN_SERVICE,
+      '-a',
+      os.userInfo().username,
+      '-w',
+    ],
+    ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
+  ];
+  for (const args of attempts) {
+    try {
+      const raw = execFileSync('security', args, {
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim();
+      const parsed = JSON.parse(raw);
+      const oauth = parsed?.claudeAiOauth;
+      if (oauth?.accessToken && oauth?.refreshToken) {
+        return oauth as KeychainOAuth;
+      }
+    } catch {
+      // Entry not found or parse error, try next
     }
-  } catch {
-    // Keychain unavailable or no entry
   }
   return null;
 }
 
 function writeKeychainCredentials(oauth: KeychainOAuth): void {
   if (process.platform !== 'darwin') return;
+  const account = os.userInfo().username;
   try {
     const payload = JSON.stringify({ claudeAiOauth: oauth });
     // Delete then re-add (security cli doesn't support in-place update)
     try {
       execFileSync(
         'security',
-        ['delete-generic-password', '-s', KEYCHAIN_SERVICE],
+        ['delete-generic-password', '-s', KEYCHAIN_SERVICE, '-a', account],
         { timeout: 5000 },
       );
     } catch {
@@ -84,7 +100,7 @@ function writeKeychainCredentials(oauth: KeychainOAuth): void {
         '-s',
         KEYCHAIN_SERVICE,
         '-a',
-        '',
+        account,
         '-w',
         payload,
         '-U',
