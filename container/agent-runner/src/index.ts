@@ -691,7 +691,10 @@ async function runQuery(
           command: 'npx',
           args: ['-y', '@piotr-agier/google-drive-mcp'],
           env: {
-            GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account3/gcp-oauth.keys.json',
+            // Separate OAuth app kept in Testing mode because distrokid's
+            // Workspace blocks unverified published apps from restricted
+            // Drive scopes. Refresh token expires every 7 days.
+            GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.config/google-drive-mcp-account3/gcp-oauth.keys.json',
             GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account3/tokens.json',
           },
         },
