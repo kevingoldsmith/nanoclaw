@@ -667,7 +667,9 @@ async function runQuery(
           command: 'npx',
           args: ['-y', '@cocal/google-calendar-mcp'],
           env: {
-            GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account3/gcp-oauth.keys.json',
+            // Same Testing-mode OAuth app as drive_account3 — distrokid
+            // Workspace blocks the published app for sensitive scopes too.
+            GOOGLE_OAUTH_CREDENTIALS: '/home/node/.config/google-drive-mcp-account3/gcp-oauth.keys.json',
             GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account3/tokens.json',
           },
         },
