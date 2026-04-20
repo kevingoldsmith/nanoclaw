@@ -249,7 +249,9 @@ function createSanitizeBashHook(): HookCallback {
 const toolStartTimes = new Map<string, number>();
 
 function createToolStartHook(): HookCallback {
-  return async (_input, toolUseId, _context) => {
+  return async (input, toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    log(`[tool-start] ${preInput.tool_name}`);
     if (toolUseId) toolStartTimes.set(toolUseId, Date.now());
     return {};
   };
