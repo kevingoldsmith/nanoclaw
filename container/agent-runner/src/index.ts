@@ -20,6 +20,7 @@ import { execFile } from 'child_process';
 import {
   query,
   HookCallback,
+  PostToolUseHookInput,
   PreCompactHookInput,
   PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -66,7 +67,7 @@ const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 const HEARTBEAT_INTERVAL_MS = 60_000;
-const QUERY_SILENCE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const QUERY_SILENCE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -242,6 +243,27 @@ function createSanitizeBashHook(): HookCallback {
         },
       },
     };
+  };
+}
+
+const toolStartTimes = new Map<string, number>();
+
+function createToolStartHook(): HookCallback {
+  return async (_input, toolUseId, _context) => {
+    if (toolUseId) toolStartTimes.set(toolUseId, Date.now());
+    return {};
+  };
+}
+
+function createToolTimingHook(): HookCallback {
+  return async (input, toolUseId, _context) => {
+    const postInput = input as PostToolUseHookInput;
+    const startTime = toolUseId ? toolStartTimes.get(toolUseId) : undefined;
+    const durationMs = startTime ? Date.now() - startTime : undefined;
+    const durStr = durationMs !== undefined ? `${Math.round(durationMs / 1000)}s` : '?';
+    log(`[tool-done] ${postInput.tool_name} took ${durStr}`);
+    if (toolUseId) toolStartTimes.delete(toolUseId);
+    return {};
   };
 }
 
@@ -758,7 +780,11 @@ async function runQuery(
         PreCompact: [
           { hooks: [createPreCompactHook(containerInput.assistantName)] },
         ],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [createSanitizeBashHook()] },
+          { hooks: [createToolStartHook()] },
+        ],
+        PostToolUse: [{ hooks: [createToolTimingHook()] }],
       },
       ...(skillModel ? { model: skillModel } : {}),
     },
