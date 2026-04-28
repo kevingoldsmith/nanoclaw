@@ -691,8 +691,10 @@ async function runQuery(
           command: 'npx',
           args: ['-y', '@cocal/google-calendar-mcp'],
           env: {
-            // Same Testing-mode OAuth app as drive_account3 — distrokid
-            // Workspace blocks the published app for sensitive scopes too.
+            // Shares the Testing-mode OAuth app (same GCP project) with drive_account3,
+            // but uses its own token file. The two MCPs persist tokens in incompatible
+            // formats (calendar wraps in {normal: {...}}, drive 1.7.6 stores flat), so a
+            // single shared token isn't viable. Two weekly re-auths required.
             GOOGLE_OAUTH_CREDENTIALS: '/home/node/.config/google-drive-mcp-account3/gcp-oauth.keys.json',
             GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account3/tokens.json',
           },
