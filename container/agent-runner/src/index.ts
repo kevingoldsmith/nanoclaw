@@ -673,7 +673,7 @@ async function runQuery(
         },
         calendar_account1: {
           command: 'npx',
-          args: ['-y', '@cocal/google-calendar-mcp'],
+          args: ['-y', '@cocal/google-calendar-mcp@2.6.1'],
           env: {
             GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account1/gcp-oauth.keys.json',
             GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account1/tokens.json',
@@ -681,7 +681,7 @@ async function runQuery(
         },
         calendar_account2: {
           command: 'npx',
-          args: ['-y', '@cocal/google-calendar-mcp'],
+          args: ['-y', '@cocal/google-calendar-mcp@2.6.1'],
           env: {
             GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account2/gcp-oauth.keys.json',
             GOOGLE_CALENDAR_MCP_TOKEN_PATH: '/home/node/.config/google-calendar-mcp-account2/tokens.json',
@@ -689,7 +689,7 @@ async function runQuery(
         },
         calendar_account3: {
           command: 'npx',
-          args: ['-y', '@cocal/google-calendar-mcp'],
+          args: ['-y', '@cocal/google-calendar-mcp@2.6.1'],
           env: {
             // Shares the Testing-mode OAuth app (same GCP project) with drive_account3,
             // but uses its own token file. The two MCPs persist tokens in incompatible
@@ -701,7 +701,7 @@ async function runQuery(
         },
         drive_account1: {
           command: 'npx',
-          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          args: ['-y', '@piotr-agier/google-drive-mcp@1.7.6'],
           env: {
             GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account1/gcp-oauth.keys.json',
             GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account1/tokens.json',
@@ -709,7 +709,7 @@ async function runQuery(
         },
         drive_account2: {
           command: 'npx',
-          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          args: ['-y', '@piotr-agier/google-drive-mcp@1.7.6'],
           env: {
             GOOGLE_DRIVE_OAUTH_CREDENTIALS: '/home/node/.calendar-creds-account2/gcp-oauth.keys.json',
             GOOGLE_DRIVE_MCP_TOKEN_PATH: '/home/node/.config/google-drive-mcp-account2/tokens.json',
@@ -717,7 +717,7 @@ async function runQuery(
         },
         drive_account3: {
           command: 'npx',
-          args: ['-y', '@piotr-agier/google-drive-mcp'],
+          args: ['-y', '@piotr-agier/google-drive-mcp@1.7.6'],
           env: {
             // Separate OAuth app kept in Testing mode because distrokid's
             // Workspace blocks unverified published apps from restricted
