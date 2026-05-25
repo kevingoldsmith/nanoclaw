@@ -188,6 +188,19 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
         }>;
       };
 
+      logger.info(
+        {
+          subtype: msg.subtype,
+          hasUser: !!msg.user,
+          hasBotId: !!msg.bot_id,
+          fileCount: msg.files?.length ?? 0,
+          textLen: msg.text?.length ?? 0,
+          channel: msg.channel,
+          ts: msg.ts,
+        },
+        'Slack message event received',
+      );
+
       // Skip subtypes except file_share (which carries files with text)
       if (msg.subtype && msg.subtype !== 'file_share') return;
       // Skip bot messages
@@ -303,6 +316,17 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
           mimetype?: string;
         }>;
       };
+
+      logger.info(
+        {
+          hasUser: !!mentionEvent.user,
+          fileCount: mentionEvent.files?.length ?? 0,
+          textLen: mentionEvent.text?.length ?? 0,
+          channel: mentionEvent.channel,
+          ts: mentionEvent.ts,
+        },
+        'Slack app_mention event received',
+      );
 
       const userId = mentionEvent.user;
       const channelId = mentionEvent.channel;
