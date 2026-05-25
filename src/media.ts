@@ -26,13 +26,15 @@ export function saveMediaToGroup(
   const uploadsDir = path.join(GROUPS_DIR, groupFolder, 'uploads');
   fs.mkdirSync(uploadsDir, { recursive: true });
 
-  const filePath = path.join(uploadsDir, `${Date.now()}-${sanitized}`);
+  const storedName = `${Date.now()}-${sanitized}`;
+  const filePath = path.join(uploadsDir, storedName);
+  const relativePath = `uploads/${storedName}`;
   fs.writeFileSync(filePath, buffer);
   logger.info(
     { groupFolder, filename: sanitized, size: buffer.length },
     'Saved media file',
   );
 
-  const contentLine = `[File: ${sanitized} (${mimetype}, ${Math.round(buffer.length / 1024)}KB) saved to ${filePath}]`;
+  const contentLine = `[File: ${sanitized} (${mimetype}, ${Math.round(buffer.length / 1024)}KB) saved to ${relativePath}]`;
   return { filePath, contentLine };
 }
