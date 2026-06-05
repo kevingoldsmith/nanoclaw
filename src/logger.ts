@@ -1,3 +1,7 @@
+import { existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { createStream, type RotatingFileStream } from 'rotating-file-stream';
+
 const LEVELS = { debug: 20, info: 30, warn: 40, error: 50, fatal: 60 } as const;
 type Level = keyof typeof LEVELS;
 
@@ -12,9 +16,44 @@ const KEY_COLOR = '\x1b[35m';
 const MSG_COLOR = '\x1b[36m';
 const RESET = '\x1b[39m';
 const FULL_RESET = '\x1b[0m';
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 const threshold =
   LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
+
+// LOG_DIR enables a rotated file at <LOG_DIR>/nanoclaw.log alongside
+// console output. Defaults to ~/Library/Logs/nanoclaw on macOS; set
+// LOG_DIR="" to disable file logging (e.g. on Linux/systemd where
+// journald captures stdout).
+const LOG_DIR =
+  process.env.LOG_DIR ??
+  (process.platform === 'darwin' && process.env.HOME
+    ? join(process.env.HOME, 'Library/Logs/nanoclaw')
+    : '');
+
+let fileStream: RotatingFileStream | null = null;
+
+if (LOG_DIR) {
+  try {
+    if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
+    fileStream = createStream('nanoclaw.log', {
+      path: LOG_DIR,
+      size: '10M',
+      interval: '1d',
+      maxFiles: 14,
+      compress: 'gzip',
+    });
+    fileStream.on('error', (err) => {
+      process.stderr.write(
+        `[logger] rotating-file-stream error: ${(err as Error).message}\n`,
+      );
+    });
+  } catch (e) {
+    process.stderr.write(
+      `[logger] failed to open rotating file: ${(e as Error).message}\n`,
+    );
+  }
+}
 
 function formatErr(err: unknown): string {
   if (err instanceof Error) {
@@ -47,15 +86,20 @@ function log(
 ): void {
   if (LEVELS[level] < threshold) return;
   const tag = `${COLORS[level]}${level.toUpperCase()}${level === 'fatal' ? FULL_RESET : RESET}`;
-  const stream = LEVELS[level] >= LEVELS.warn ? process.stderr : process.stdout;
+  const consoleStream =
+    LEVELS[level] >= LEVELS.warn ? process.stderr : process.stdout;
+  const time = ts();
+
+  let consoleLine: string;
   if (typeof dataOrMsg === 'string') {
-    stream.write(
-      `[${ts()}] ${tag} (${process.pid}): ${MSG_COLOR}${dataOrMsg}${RESET}\n`,
-    );
+    consoleLine = `[${time}] ${tag} (${process.pid}): ${MSG_COLOR}${dataOrMsg}${RESET}\n`;
   } else {
-    stream.write(
-      `[${ts()}] ${tag} (${process.pid}): ${MSG_COLOR}${msg}${RESET}${formatData(dataOrMsg)}\n`,
-    );
+    consoleLine = `[${time}] ${tag} (${process.pid}): ${MSG_COLOR}${msg ?? ''}${RESET}${formatData(dataOrMsg)}\n`;
+  }
+
+  consoleStream.write(consoleLine);
+  if (fileStream) {
+    fileStream.write(consoleLine.replace(ANSI_RE, ''));
   }
 }
 
