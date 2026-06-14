@@ -75,6 +75,16 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
   let reconnectAttempts = 0;
   let reconnectDelay = 1000;
   const MAX_RECONNECT_DELAY = 60_000;
+  // Only reset the backoff after the connection has been stable this long.
+  // Without this, a flapping socket (connect → 25s → drop → reconnect →
+  // ...) keeps retrying every 1s instead of backing off.
+  const STABILITY_DELAY_MS = 60_000;
+  let stabilityTimer: NodeJS.Timeout | null = null;
+  // Flap watchdog: if disconnects pile up faster than this, force-exit so
+  // launchd (KeepAlive=true) respawns a fresh process with a clean socket.
+  const FLAP_WINDOW_MS = 120_000;
+  const FLAP_THRESHOLD = 5;
+  const recentDisconnects: number[] = [];
   let shuttingDown = false;
 
   // The App + SocketModeClient pair is recreated on reconnect
@@ -103,8 +113,15 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
     client.on('connected', () => {
       logger.info('Slack socket connected');
       connected = true;
-      reconnectAttempts = 0;
-      reconnectDelay = 1000;
+      // Defer backoff reset until the connection has held for STABILITY_DELAY_MS.
+      // A flapping socket that disconnects before that timer fires keeps the
+      // exponential backoff growing.
+      if (stabilityTimer) clearTimeout(stabilityTimer);
+      stabilityTimer = setTimeout(() => {
+        reconnectAttempts = 0;
+        reconnectDelay = 1000;
+        stabilityTimer = null;
+      }, STABILITY_DELAY_MS);
     });
 
     client.on('disconnecting', () => {
@@ -113,10 +130,37 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
 
     client.on('disconnected', async (err?: Error) => {
       connected = false;
+      if (stabilityTimer) {
+        clearTimeout(stabilityTimer);
+        stabilityTimer = null;
+      }
       if (shuttingDown) return;
 
+      const now = Date.now();
+      recentDisconnects.push(now);
+      while (
+        recentDisconnects.length > 0 &&
+        recentDisconnects[0] < now - FLAP_WINDOW_MS
+      ) {
+        recentDisconnects.shift();
+      }
+      if (recentDisconnects.length >= FLAP_THRESHOLD) {
+        logger.fatal(
+          {
+            disconnectCount: recentDisconnects.length,
+            windowMs: FLAP_WINDOW_MS,
+          },
+          'Slack socket flapping — exiting so launchd respawns a fresh socket',
+        );
+        process.exit(1);
+      }
+
       logger.warn(
-        { err: err?.message, attempt: reconnectAttempts },
+        {
+          err: err?.message,
+          attempt: reconnectAttempts,
+          recentDisconnects: recentDisconnects.length,
+        },
         'Slack socket disconnected — scheduling reconnect',
       );
 

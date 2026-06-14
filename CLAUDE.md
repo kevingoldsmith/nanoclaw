@@ -91,6 +91,8 @@ systemctl --user restart nanoclaw
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
 
+**Slack socket flap auto-restart:** If the Slack socket disconnects 5+ times within 2 minutes (e.g. after a network blip leaves Slack's side in a half-open state), the channel logs `Slack socket flapping — exiting so launchd respawns a fresh socket` at fatal level and calls `process.exit(1)`. The launchd plist's `KeepAlive=true` then respawns the process with a clean socket. A normal `connected` event no longer resets the reconnect backoff immediately — it only resets after the connection has held for 60s, so a flapping socket actually backs off instead of retrying every second. Both knobs live in `src/channels/slack.ts` (`STABILITY_DELAY_MS`, `FLAP_WINDOW_MS`, `FLAP_THRESHOLD`).
+
 ## Skill Model Override
 
 Skills in `skills_for_nanoclaw/` can specify `model: claude-opus-4-6` (or any model string) in their SKILL.md frontmatter. The agent-runner detects skill references in the prompt, reads the frontmatter, and passes the model to the SDK `query()` call.
