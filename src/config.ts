@@ -62,6 +62,19 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
   process.env.CREDENTIAL_PROXY_PORT || '3001',
   10,
 );
+// Credential drop watcher: polls a (typically Dropbox-synced) directory
+// for age-encrypted token files and installs them at mapped target paths.
+// AGE_IDENTITY_FILE must be outside the watched directory.
+export const CREDENTIAL_DROP_DIR =
+  process.env.CREDENTIAL_DROP_DIR ||
+  path.join(HOME_DIR, 'Dropbox', 'AndysDropBox', 'Account3');
+export const AGE_IDENTITY_FILE =
+  process.env.AGE_IDENTITY_FILE ||
+  path.join(HOME_DIR, '.config', 'nanoclaw', 'age-identity.txt');
+export const CREDENTIAL_DROP_INTERVAL_MS = parseInt(
+  process.env.CREDENTIAL_DROP_INTERVAL_MS || '300000',
+  10,
+);
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
