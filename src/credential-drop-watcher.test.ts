@@ -196,6 +196,107 @@ describe('credential-drop-watcher: file routing', () => {
   });
 });
 
+import {
+  startCredentialDropWatcher,
+  stopCredentialDropWatcher,
+  _resetWatcherForTests,
+} from './credential-drop-watcher.js';
+
+describe('credential-drop-watcher: start/stop', () => {
+  let tmpRoot: string;
+  let dropDir: string;
+  let identityFile: string;
+
+  beforeEach(async () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cdw-start-'));
+    dropDir = path.join(tmpRoot, 'drop');
+    identityFile = path.join(tmpRoot, 'identity.txt');
+    fs.mkdirSync(dropDir);
+
+    const age = await import('age-encryption');
+    const identity = await age.generateIdentity();
+    fs.writeFileSync(identityFile, identity);
+
+    _resetWatcherForTests();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    stopCredentialDropWatcher();
+    vi.useRealTimers();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('runs an immediate tick on start', async () => {
+    fs.writeFileSync(path.join(dropDir, 'mystery.age'), 'garbage');
+    const notify = vi.fn();
+
+    startCredentialDropWatcher({
+      dropDir,
+      identityFile,
+      intervalMs: 60_000,
+      notify,
+    });
+
+    // Allow the immediate async tick to run.
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs periodic ticks at the configured interval', async () => {
+    const notify = vi.fn();
+    startCredentialDropWatcher({
+      dropDir,
+      identityFile,
+      intervalMs: 1000,
+      notify,
+    });
+    await vi.advanceTimersByTimeAsync(0); // initial tick
+
+    // Drop a new file and advance one interval.
+    fs.writeFileSync(path.join(dropDir, 'mystery.age'), 'garbage');
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(notify).toHaveBeenCalledTimes(1); // initial tick saw nothing, second saw mystery.age
+  });
+
+  it('does not start if identity file is missing', () => {
+    const notify = vi.fn();
+    const missing = path.join(tmpRoot, 'no-such-file.txt');
+
+    startCredentialDropWatcher({
+      dropDir,
+      identityFile: missing,
+      intervalMs: 1000,
+      notify,
+    });
+
+    // Drop a file; advance time. Nothing should happen.
+    fs.writeFileSync(path.join(dropDir, 'mystery.age'), 'garbage');
+    return vi.advanceTimersByTimeAsync(5000).then(() => {
+      expect(notify).not.toHaveBeenCalled();
+    });
+  });
+
+  it('stop() prevents further ticks', async () => {
+    const notify = vi.fn();
+    startCredentialDropWatcher({
+      dropDir,
+      identityFile,
+      intervalMs: 1000,
+      notify,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    stopCredentialDropWatcher();
+    fs.writeFileSync(path.join(dropDir, 'mystery.age'), 'garbage');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+});
+
 describe('credential-drop-watcher: processDropDirOnce', () => {
   let tmpRoot: string;
   let dropDir: string;
@@ -216,10 +317,7 @@ describe('credential-drop-watcher: processDropDirOnce', () => {
   it('skips .processed/ and .errors/ subdirectories', async () => {
     fs.mkdirSync(path.join(dropDir, '.processed'));
     fs.mkdirSync(path.join(dropDir, '.errors'));
-    fs.writeFileSync(
-      path.join(dropDir, '.processed', 'old.age'),
-      'old-data',
-    );
+    fs.writeFileSync(path.join(dropDir, '.processed', 'old.age'), 'old-data');
     const notify = vi.fn();
     await processDropDirOnce({
       dropDir,

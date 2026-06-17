@@ -2,6 +2,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { logger } from './logger.js';
+
 export interface DropTarget {
   target: string;
   label: string;
@@ -141,7 +143,10 @@ export interface ProcessOnceArgs {
 
 function extractExpiryNote(plaintext: Buffer): string {
   try {
-    const obj = JSON.parse(plaintext.toString('utf8')) as Record<string, unknown>;
+    const obj = JSON.parse(plaintext.toString('utf8')) as Record<
+      string,
+      unknown
+    >;
     const inner = (obj.normal as Record<string, unknown> | undefined) ?? obj;
     const expiresIn = inner.refresh_token_expires_in as number | undefined;
     if (typeof expiresIn === 'number') {
@@ -154,9 +159,7 @@ function extractExpiryNote(plaintext: Buffer): string {
   return '';
 }
 
-export async function processDropDirOnce(
-  args: ProcessOnceArgs,
-): Promise<void> {
+export async function processDropDirOnce(args: ProcessOnceArgs): Promise<void> {
   const { dropDir, identity, notify } = args;
   const lookup = args.lookupTargetOverride ?? lookupTarget;
 
@@ -231,5 +234,61 @@ export async function processDropDirOnce(
         // Notify itself failed; we've done all we can.
       }
     }
+  }
+}
+
+export interface StartArgs {
+  dropDir: string;
+  identityFile: string;
+  intervalMs: number;
+  notify: (text: string) => void | Promise<void>;
+}
+
+let interval: NodeJS.Timeout | null = null;
+
+export function startCredentialDropWatcher(args: StartArgs): void {
+  const { dropDir, identityFile, intervalMs, notify } = args;
+
+  if (!fs.existsSync(identityFile)) {
+    logger.warn(
+      { identityFile },
+      'credential-drop-watcher: AGE_IDENTITY_FILE missing — watcher not started',
+    );
+    return;
+  }
+
+  const identity = fs.readFileSync(identityFile, 'utf8').trim();
+
+  const tick = () => {
+    processDropDirOnce({ dropDir, identity, notify }).catch((err) => {
+      logger.error(
+        { err: (err as Error).message },
+        'credential-drop-watcher: tick failed',
+      );
+    });
+  };
+
+  // Immediate tick, then on interval.
+  tick();
+  interval = setInterval(tick, intervalMs);
+
+  logger.info(
+    { dropDir, intervalMs },
+    'credential-drop-watcher: started',
+  );
+}
+
+export function stopCredentialDropWatcher(): void {
+  if (interval) {
+    clearInterval(interval);
+    interval = null;
+  }
+}
+
+// Test-only: reset module-level state between tests.
+export function _resetWatcherForTests(): void {
+  if (interval) {
+    clearInterval(interval);
+    interval = null;
   }
 }
