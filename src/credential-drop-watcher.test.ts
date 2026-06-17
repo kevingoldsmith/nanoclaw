@@ -1,11 +1,14 @@
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   decryptWithIdentity,
+  installFile,
   lookupTarget,
+  moveToErrors,
   validateTokensJson,
 } from './credential-drop-watcher.js';
 
@@ -92,7 +95,8 @@ describe('credential-drop-watcher: decryptWithIdentity', () => {
     const { identity, ciphertext } = await makeFixture('hello world');
     const result = await decryptWithIdentity(ciphertext, identity);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.plaintext.toString('utf8')).toBe('hello world');
+    if (result.ok)
+      expect(result.plaintext.toString('utf8')).toBe('hello world');
   });
 
   it('fails with a wrong-key identity', async () => {
@@ -111,5 +115,82 @@ describe('credential-drop-watcher: decryptWithIdentity', () => {
       someIdentity,
     );
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('credential-drop-watcher: file routing', () => {
+  let tmpRoot: string;
+  let dropDir: string;
+  let targetDir: string;
+
+  beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cdw-'));
+    dropDir = path.join(tmpRoot, 'drop');
+    targetDir = path.join(tmpRoot, 'target');
+    fs.mkdirSync(dropDir);
+    fs.mkdirSync(targetDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('installFile: writes plaintext to target atomically and moves source to .processed/', () => {
+    const source = path.join(dropDir, 'tokens-account3-drive.json.age');
+    fs.writeFileSync(source, 'encrypted-payload');
+    const target = path.join(targetDir, 'tokens.json');
+    const plaintext = Buffer.from('{"refresh_token":"r"}');
+
+    installFile({ source, target, plaintext, dropDir });
+
+    expect(fs.readFileSync(target, 'utf8')).toBe('{"refresh_token":"r"}');
+    expect(fs.existsSync(source)).toBe(false);
+    const processed = fs.readdirSync(path.join(dropDir, '.processed'));
+    expect(processed).toHaveLength(1);
+    expect(processed[0]).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-tokens-account3-drive\.json\.age$/,
+    );
+  });
+
+  it('installFile: creates the target directory if missing', () => {
+    const source = path.join(dropDir, 'tokens-account3-drive.json.age');
+    fs.writeFileSync(source, 'enc');
+    const target = path.join(targetDir, 'nested', 'subdir', 'tokens.json');
+
+    installFile({ source, target, plaintext: Buffer.from('{}'), dropDir });
+
+    expect(fs.existsSync(target)).toBe(true);
+  });
+
+  it('installFile: does not leave the .tmp file behind on success', () => {
+    const source = path.join(dropDir, 'tokens-account3-drive.json.age');
+    fs.writeFileSync(source, 'enc');
+    const target = path.join(targetDir, 'tokens.json');
+
+    installFile({ source, target, plaintext: Buffer.from('{}'), dropDir });
+
+    const stragglers = fs
+      .readdirSync(targetDir)
+      .filter((f) => f.endsWith('.tmp'));
+    expect(stragglers).toHaveLength(0);
+  });
+
+  it('moveToErrors: moves source to .errors/ with a .reason sidecar', () => {
+    const source = path.join(dropDir, 'bogus.age');
+    fs.writeFileSync(source, 'garbage');
+
+    moveToErrors({ source, reason: 'decrypt failed: bad header', dropDir });
+
+    expect(fs.existsSync(source)).toBe(false);
+    const errors = fs.readdirSync(path.join(dropDir, '.errors'));
+    const enc = errors.find((f) => f.endsWith('.age'));
+    const reasonFile = errors.find((f) => f.endsWith('.reason'));
+    expect(enc).toBeDefined();
+    expect(reasonFile).toBeDefined();
+    const content = fs.readFileSync(
+      path.join(dropDir, '.errors', reasonFile!),
+      'utf8',
+    );
+    expect(content).toBe('decrypt failed: bad header');
   });
 });

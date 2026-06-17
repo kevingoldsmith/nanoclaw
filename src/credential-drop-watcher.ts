@@ -1,3 +1,4 @@
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -82,4 +83,50 @@ export async function decryptWithIdentity(
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
+}
+
+function timestampForFilename(): string {
+  // 2026-06-17T14-32-15Z (colons replaced with dashes for filesystem safety)
+  return new Date().toISOString().replace(/:/g, '-').replace(/\.\d+/, '');
+}
+
+export interface InstallArgs {
+  source: string;
+  target: string;
+  plaintext: Buffer;
+  dropDir: string;
+}
+
+export function installFile(args: InstallArgs): void {
+  const { source, target, plaintext, dropDir } = args;
+
+  // 1. Ensure target directory exists.
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+
+  // 2. Atomic rename via tmp file in the same directory.
+  const tmp = `${target}.tmp`;
+  fs.writeFileSync(tmp, plaintext, { mode: 0o600 });
+  fs.renameSync(tmp, target);
+
+  // 3. Move source to .processed/
+  const processedDir = path.join(dropDir, '.processed');
+  fs.mkdirSync(processedDir, { recursive: true });
+  const stamped = `${timestampForFilename()}-${path.basename(source)}`;
+  fs.renameSync(source, path.join(processedDir, stamped));
+}
+
+export interface ErrorArgs {
+  source: string;
+  reason: string;
+  dropDir: string;
+}
+
+export function moveToErrors(args: ErrorArgs): void {
+  const { source, reason, dropDir } = args;
+  const errorsDir = path.join(dropDir, '.errors');
+  fs.mkdirSync(errorsDir, { recursive: true });
+  const stamped = `${timestampForFilename()}-${path.basename(source)}`;
+  const dest = path.join(errorsDir, stamped);
+  fs.renameSync(source, dest);
+  fs.writeFileSync(`${dest}.reason`, reason);
 }
