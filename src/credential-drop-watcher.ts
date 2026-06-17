@@ -130,3 +130,106 @@ export function moveToErrors(args: ErrorArgs): void {
   fs.renameSync(source, dest);
   fs.writeFileSync(`${dest}.reason`, reason);
 }
+
+export interface ProcessOnceArgs {
+  dropDir: string;
+  identity: string;
+  notify: (text: string) => void | Promise<void>;
+  // Test seam — production code uses the real lookupTarget.
+  lookupTargetOverride?: (filename: string) => DropTarget | null;
+}
+
+function extractExpiryNote(plaintext: Buffer): string {
+  try {
+    const obj = JSON.parse(plaintext.toString('utf8')) as Record<string, unknown>;
+    const inner = (obj.normal as Record<string, unknown> | undefined) ?? obj;
+    const expiresIn = inner.refresh_token_expires_in as number | undefined;
+    if (typeof expiresIn === 'number') {
+      const expiry = new Date(Date.now() + expiresIn * 1000);
+      return ` (refresh expires ${expiry.toISOString().slice(0, 10)})`;
+    }
+  } catch {
+    // Best-effort only; absence of expiry is not an error.
+  }
+  return '';
+}
+
+export async function processDropDirOnce(
+  args: ProcessOnceArgs,
+): Promise<void> {
+  const { dropDir, identity, notify } = args;
+  const lookup = args.lookupTargetOverride ?? lookupTarget;
+
+  if (!fs.existsSync(dropDir)) return;
+
+  const entries = fs
+    .readdirSync(dropDir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.age'))
+    .map((e) => e.name)
+    .sort();
+
+  for (const filename of entries) {
+    const source = path.join(dropDir, filename);
+    try {
+      const mapping = lookup(filename);
+      if (!mapping) {
+        moveToErrors({ source, reason: 'no mapping for filename', dropDir });
+        await notify(
+          `⚠ Credential drop failed for ${filename}: no mapping for filename`,
+        );
+        continue;
+      }
+
+      const ciphertext = fs.readFileSync(source);
+      const decrypted = await decryptWithIdentity(ciphertext, identity);
+      if (!decrypted.ok) {
+        moveToErrors({
+          source,
+          reason: `decrypt failed: ${decrypted.reason}`,
+          dropDir,
+        });
+        await notify(
+          `⚠ Credential drop failed for ${filename}: decrypt failed`,
+        );
+        continue;
+      }
+
+      const validation = validateTokensJson(decrypted.plaintext);
+      if (!validation.ok) {
+        moveToErrors({
+          source,
+          reason: `validation failed: ${validation.reason}`,
+          dropDir,
+        });
+        await notify(
+          `⚠ Credential drop failed for ${filename}: ${validation.reason}`,
+        );
+        continue;
+      }
+
+      installFile({
+        source,
+        target: mapping.target,
+        plaintext: decrypted.plaintext,
+        dropDir,
+      });
+      await notify(
+        `✓ Installed ${mapping.label} tokens${extractExpiryNote(decrypted.plaintext)}`,
+      );
+    } catch (err) {
+      // Last-resort: never let one bad file crash the batch.
+      // If renameSync fails (e.g. EACCES), leave the file in place for retry next tick.
+      const reason = (err as Error).message;
+      try {
+        if (fs.existsSync(source)) {
+          // Transient FS error — leave file for next tick, just notify.
+          await notify(
+            `⚠ Credential drop transient failure for ${filename}: ${reason}`,
+          );
+        }
+      } catch {
+        // Notify itself failed; we've done all we can.
+      }
+    }
+  }
+}

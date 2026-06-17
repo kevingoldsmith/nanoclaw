@@ -2,13 +2,14 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   decryptWithIdentity,
   installFile,
   lookupTarget,
   moveToErrors,
+  processDropDirOnce,
   validateTokensJson,
 } from './credential-drop-watcher.js';
 
@@ -192,5 +193,109 @@ describe('credential-drop-watcher: file routing', () => {
       'utf8',
     );
     expect(content).toBe('decrypt failed: bad header');
+  });
+});
+
+describe('credential-drop-watcher: processDropDirOnce', () => {
+  let tmpRoot: string;
+  let dropDir: string;
+  let homeOverride: string;
+
+  beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cdw-orch-'));
+    dropDir = path.join(tmpRoot, 'drop');
+    homeOverride = path.join(tmpRoot, 'home');
+    fs.mkdirSync(dropDir);
+    fs.mkdirSync(homeOverride);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('skips .processed/ and .errors/ subdirectories', async () => {
+    fs.mkdirSync(path.join(dropDir, '.processed'));
+    fs.mkdirSync(path.join(dropDir, '.errors'));
+    fs.writeFileSync(
+      path.join(dropDir, '.processed', 'old.age'),
+      'old-data',
+    );
+    const notify = vi.fn();
+    await processDropDirOnce({
+      dropDir,
+      identity: 'AGE-SECRET-KEY-1XXX',
+      notify,
+      lookupTargetOverride: () => null,
+    });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('routes unknown filenames to .errors/ with notify', async () => {
+    fs.writeFileSync(path.join(dropDir, 'mystery.age'), 'data');
+    const notify = vi.fn();
+
+    await processDropDirOnce({
+      dropDir,
+      identity: 'AGE-SECRET-KEY-1XXX',
+      notify,
+    });
+
+    const errors = fs.readdirSync(path.join(dropDir, '.errors'));
+    expect(errors.some((f) => f.endsWith('.age'))).toBe(true);
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringMatching(/Credential drop failed.*mystery\.age.*no mapping/),
+    );
+  });
+
+  it('happy path: decrypts and installs a known file, notifies success', async () => {
+    const age = await import('age-encryption');
+    const identity = await age.generateIdentity();
+    const recipient = await age.identityToRecipient(identity);
+
+    const tokensJson = JSON.stringify({
+      refresh_token: 'r',
+      refresh_token_expires_in: 604799,
+    });
+    const encrypter = new age.Encrypter();
+    encrypter.addRecipient(recipient);
+    const ciphertext = Buffer.from(
+      await encrypter.encrypt(Buffer.from(tokensJson)),
+    );
+    const filename = 'tokens-account3-drive.json.age';
+    fs.writeFileSync(path.join(dropDir, filename), ciphertext);
+
+    const targetPath = path.join(homeOverride, 'tokens.json');
+    const notify = vi.fn();
+
+    await processDropDirOnce({
+      dropDir,
+      identity,
+      notify,
+      lookupTargetOverride: (name) =>
+        name === filename
+          ? { target: targetPath, label: 'account3 drive' }
+          : null,
+    });
+
+    expect(fs.readFileSync(targetPath, 'utf8')).toBe(tokensJson);
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringMatching(/Installed account3 drive tokens/),
+    );
+  });
+
+  it('continues after a bad file (one error does not poison the batch)', async () => {
+    fs.writeFileSync(path.join(dropDir, 'a-bogus.age'), 'garbage');
+    fs.writeFileSync(path.join(dropDir, 'b-also-bogus.age'), 'more garbage');
+    const notify = vi.fn();
+
+    await processDropDirOnce({
+      dropDir,
+      identity: 'AGE-SECRET-KEY-1XXX',
+      notify,
+    });
+
+    const errors = fs.readdirSync(path.join(dropDir, '.errors'));
+    expect(errors.filter((f) => f.endsWith('.age'))).toHaveLength(2);
+    expect(notify).toHaveBeenCalledTimes(2);
   });
 });
