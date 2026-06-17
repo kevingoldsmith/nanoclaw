@@ -16,7 +16,10 @@ import {
   POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
-import { startCredentialDropWatcher } from './credential-drop-watcher.js';
+import {
+  startCredentialDropWatcher,
+  stopCredentialDropWatcher,
+} from './credential-drop-watcher.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
@@ -630,6 +633,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopCredentialDropWatcher();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
