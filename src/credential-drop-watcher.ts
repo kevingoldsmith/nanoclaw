@@ -272,10 +272,7 @@ export function startCredentialDropWatcher(args: StartArgs): void {
   tick();
   interval = setInterval(tick, intervalMs);
 
-  logger.info(
-    { dropDir, intervalMs },
-    'credential-drop-watcher: started',
-  );
+  logger.info({ dropDir, intervalMs }, 'credential-drop-watcher: started');
 }
 
 export function stopCredentialDropWatcher(): void {
