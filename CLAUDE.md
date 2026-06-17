@@ -14,6 +14,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/channels/registry.ts` | Channel registry (self-registration at startup) |
 | `src/channels/slack.ts` | Slack channel (Socket Mode DMs and mentions) |
 | `src/credential-proxy.ts` | HTTP proxy that injects API credentials into container requests |
+| `src/credential-drop-watcher.ts` | Polls drop dir, decrypts age files, installs tokens atomically |
 | `src/ipc.ts` | IPC watcher and task processing |
 | `src/router.ts` | Message formatting and outbound routing |
 | `src/config.ts` | Trigger pattern, paths, intervals |
@@ -124,3 +125,37 @@ IPC files from containers are limited to 1MB. Oversized files are moved to `data
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+
+## Credential Drop Watcher
+
+A host-side service inside nanoclaw polls a Dropbox-synced directory for age-encrypted token files and atomically installs them at their target paths. This enables remote re-auth of account3 (DistroKid Testing-mode OAuth, 7-day refresh tokens) without exposing the Mac Mini to inbound connections.
+
+**Config (`.env`):**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CREDENTIAL_DROP_DIR` | `~/Dropbox/AndysDropBox/Account3` | Watched directory |
+| `AGE_IDENTITY_FILE` | `~/.config/nanoclaw/age-identity.txt` | age private key (must be outside Dropbox) |
+| `CREDENTIAL_DROP_INTERVAL_MS` | `300000` (5 min) | Poll interval |
+
+**One-time setup:**
+
+```bash
+mkdir -p ~/.config/nanoclaw && chmod 700 ~/.config/nanoclaw
+age-keygen -o ~/.config/nanoclaw/age-identity.txt
+chmod 600 ~/.config/nanoclaw/age-identity.txt
+age-keygen -y ~/.config/nanoclaw/age-identity.txt   # prints the public key
+```
+
+Paste the printed public key into `scripts/rotate-account3.sh` as `RECIPIENT_PUBKEY`.
+
+**Remote re-auth from the laptop:**
+
+```bash
+./scripts/rotate-account3.sh drive
+./scripts/rotate-account3.sh calendar
+```
+
+Expect a Slack confirmation within 5 minutes (`✓ Installed account3 <service> tokens`). On failure the watcher moves the file to `.errors/<timestamp>-<filename>` with a `.reason` sidecar and posts a Slack warning. Successful drops move to `.processed/<timestamp>-<filename>`.
+
+**Adding new file types:** edit the `MAPPING` table in `src/credential-drop-watcher.ts` — one entry per filename → target-path pair. The mapping table is the security boundary; the watcher writes only to paths it lists.
