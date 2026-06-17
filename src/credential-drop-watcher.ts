@@ -64,3 +64,22 @@ export function validateTokensJson(buf: Buffer): ValidationResult {
   }
   return { ok: false, reason: 'missing refresh_token' };
 }
+
+export type DecryptResult =
+  | { ok: true; plaintext: Buffer }
+  | { ok: false; reason: string };
+
+export async function decryptWithIdentity(
+  ciphertext: Buffer,
+  identity: string,
+): Promise<DecryptResult> {
+  try {
+    const age = await import('age-encryption');
+    const decrypter = new age.Decrypter();
+    decrypter.addIdentity(identity);
+    const plaintext = await decrypter.decrypt(ciphertext);
+    return { ok: true, plaintext: Buffer.from(plaintext) };
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+}

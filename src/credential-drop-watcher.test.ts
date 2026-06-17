@@ -4,6 +4,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  decryptWithIdentity,
   lookupTarget,
   validateTokensJson,
 } from './credential-drop-watcher.js';
@@ -58,9 +59,7 @@ describe('credential-drop-watcher: validateTokensJson', () => {
 
   it('accepts nested-shape tokens with refresh_token inside `normal`', () => {
     // Calendar MCP stores: { normal: { refresh_token: '...' } }
-    const buf = Buffer.from(
-      JSON.stringify({ normal: { refresh_token: 'r' } }),
-    );
+    const buf = Buffer.from(JSON.stringify({ normal: { refresh_token: 'r' } }));
     expect(validateTokensJson(buf)).toEqual({ ok: true });
   });
 
@@ -74,5 +73,43 @@ describe('credential-drop-watcher: validateTokensJson', () => {
   it('rejects empty input', () => {
     const r = validateTokensJson(Buffer.alloc(0));
     expect(r.ok).toBe(false);
+  });
+});
+
+// Helper: generate a keypair and encrypt a plaintext using age-encryption.
+async function makeFixture(plaintext: string) {
+  const age = await import('age-encryption');
+  const identity = await age.generateIdentity();
+  const recipient = await age.identityToRecipient(identity);
+  const encrypter = new age.Encrypter();
+  encrypter.addRecipient(recipient);
+  const ciphertext = await encrypter.encrypt(Buffer.from(plaintext));
+  return { identity, ciphertext: Buffer.from(ciphertext) };
+}
+
+describe('credential-drop-watcher: decryptWithIdentity', () => {
+  it('decrypts a ciphertext encrypted to the matching identity', async () => {
+    const { identity, ciphertext } = await makeFixture('hello world');
+    const result = await decryptWithIdentity(ciphertext, identity);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.plaintext.toString('utf8')).toBe('hello world');
+  });
+
+  it('fails with a wrong-key identity', async () => {
+    const { ciphertext } = await makeFixture('secret');
+    const age = await import('age-encryption');
+    const wrongIdentity = await age.generateIdentity();
+    const result = await decryptWithIdentity(ciphertext, wrongIdentity);
+    expect(result.ok).toBe(false);
+  });
+
+  it('fails on garbage bytes', async () => {
+    const age = await import('age-encryption');
+    const someIdentity = await age.generateIdentity();
+    const result = await decryptWithIdentity(
+      Buffer.from('not-age-ciphertext'),
+      someIdentity,
+    );
+    expect(result.ok).toBe(false);
   });
 });
