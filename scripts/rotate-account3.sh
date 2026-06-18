@@ -16,7 +16,7 @@ set -euo pipefail
 
 # REPLACE WITH THE OUTPUT OF `age-keygen -y ~/.config/nanoclaw/age-identity.txt`
 # (the public key — safe to commit; the private key stays on the Mac Mini).
-RECIPIENT_PUBKEY="age1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+RECIPIENT_PUBKEY="age19xd8clthrrumwvhwzzmutyln7237j9e2kj0ejw7kty5q5q296fgqy3cra0"
 
 DROPBOX_DIR="${HOME}/Dropbox/AndysDropBox/Account3"
 
