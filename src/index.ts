@@ -3,7 +3,10 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGE_IDENTITY_FILE,
   ASSISTANT_NAME,
+  CREDENTIAL_DROP_DIR,
+  CREDENTIAL_DROP_INTERVAL_MS,
   CREDENTIAL_PROXY_PORT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
@@ -13,6 +16,10 @@ import {
   POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
+import {
+  startCredentialDropWatcher,
+  stopCredentialDropWatcher,
+} from './credential-drop-watcher.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
@@ -626,6 +633,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopCredentialDropWatcher();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -777,6 +785,34 @@ async function main(): Promise<void> {
       }
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
+    },
+  });
+  startCredentialDropWatcher({
+    dropDir: CREDENTIAL_DROP_DIR,
+    identityFile: AGE_IDENTITY_FILE,
+    intervalMs: CREDENTIAL_DROP_INTERVAL_MS,
+    notify: async (text: string) => {
+      // Send to the first registered group on whichever channel owns it.
+      // Mirrors the pattern used by the connection-status notifier above.
+      for (const [jid] of Object.entries(registeredGroups)) {
+        for (const ch of channels) {
+          if (ch.isConnected() && ch.ownsJid(jid)) {
+            try {
+              await ch.sendMessage(jid, text);
+            } catch (err) {
+              logger.error(
+                { err, channel: ch.name },
+                'credential-drop-watcher: failed to send notification',
+              );
+            }
+            return;
+          }
+        }
+      }
+      logger.warn(
+        { text },
+        'credential-drop-watcher: no connected channel for notification',
+      );
     },
   });
   startIpcWatcher({
