@@ -31,9 +31,9 @@ describe('credential-drop-watcher: parseIdentityFile', () => {
   });
 
   it('throws on a file with no AGE-SECRET-KEY line', () => {
-    expect(() => parseIdentityFile('# created\n# public key: age1XYZ\n')).toThrow(
-      /no AGE-SECRET-KEY/,
-    );
+    expect(() =>
+      parseIdentityFile('# created\n# public key: age1XYZ\n'),
+    ).toThrow(/no AGE-SECRET-KEY/);
   });
 });
 
