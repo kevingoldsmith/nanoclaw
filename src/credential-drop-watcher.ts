@@ -246,6 +246,19 @@ export interface StartArgs {
 
 let interval: NodeJS.Timeout | null = null;
 
+// age-keygen writes a file with `# created: ...` and `# public key: ...`
+// comment lines before the actual `AGE-SECRET-KEY-1...` line. The
+// age-encryption npm library only accepts the bare key string, so we strip
+// comments and blanks.
+export function parseIdentityFile(content: string): string {
+  const lines = content.split('\n').map((l) => l.trim());
+  const keyLine = lines.find((l) => l.startsWith('AGE-SECRET-KEY-'));
+  if (!keyLine) {
+    throw new Error('no AGE-SECRET-KEY line in identity file');
+  }
+  return keyLine;
+}
+
 export function startCredentialDropWatcher(args: StartArgs): void {
   const { dropDir, identityFile, intervalMs, notify } = args;
 
@@ -257,7 +270,7 @@ export function startCredentialDropWatcher(args: StartArgs): void {
     return;
   }
 
-  const identity = fs.readFileSync(identityFile, 'utf8').trim();
+  const identity = parseIdentityFile(fs.readFileSync(identityFile, 'utf8'));
 
   const tick = () => {
     processDropDirOnce({ dropDir, identity, notify }).catch((err) => {

@@ -9,9 +9,33 @@ import {
   installFile,
   lookupTarget,
   moveToErrors,
+  parseIdentityFile,
   processDropDirOnce,
   validateTokensJson,
 } from './credential-drop-watcher.js';
+
+describe('credential-drop-watcher: parseIdentityFile', () => {
+  it('extracts AGE-SECRET-KEY line from age-keygen output', () => {
+    const content =
+      '# created: 2026-06-17T22:13:37-07:00\n' +
+      '# public key: age19xd8clthrrumwvhwzzmutyln7237j9e2kj0ejw7kty5q5q296fgqy3cra0\n' +
+      'AGE-SECRET-KEY-1HURRPQDKAVQ709FHXQDALU7U3R7Q630KKNAV4WT66QYHX2HPJCZSFT29UR\n';
+    expect(parseIdentityFile(content)).toBe(
+      'AGE-SECRET-KEY-1HURRPQDKAVQ709FHXQDALU7U3R7Q630KKNAV4WT66QYHX2HPJCZSFT29UR',
+    );
+  });
+
+  it('extracts bare key from a file with no comments', () => {
+    const content = 'AGE-SECRET-KEY-1ABCDEF\n';
+    expect(parseIdentityFile(content)).toBe('AGE-SECRET-KEY-1ABCDEF');
+  });
+
+  it('throws on a file with no AGE-SECRET-KEY line', () => {
+    expect(() => parseIdentityFile('# created\n# public key: age1XYZ\n')).toThrow(
+      /no AGE-SECRET-KEY/,
+    );
+  });
+});
 
 describe('credential-drop-watcher: lookupTarget', () => {
   it('maps drive filename to drive token path', () => {
