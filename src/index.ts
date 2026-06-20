@@ -21,6 +21,7 @@ import {
   stopCredentialDropWatcher,
 } from './credential-drop-watcher.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { setNotify as setAuthStateNotify } from './auth-state.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -786,6 +787,27 @@ async function main(): Promise<void> {
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
     },
+  });
+  setAuthStateNotify(async (text: string) => {
+    for (const [jid] of Object.entries(registeredGroups)) {
+      for (const ch of channels) {
+        if (ch.isConnected() && ch.ownsJid(jid)) {
+          try {
+            await ch.sendMessage(jid, text);
+          } catch (err) {
+            logger.error(
+              { err, channel: ch.name },
+              'auth-state: failed to send notification',
+            );
+          }
+          return;
+        }
+      }
+    }
+    logger.warn(
+      { text },
+      'auth-state: no connected channel for notification',
+    );
   });
   startCredentialDropWatcher({
     dropDir: CREDENTIAL_DROP_DIR,
