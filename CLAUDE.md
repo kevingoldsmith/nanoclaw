@@ -11,6 +11,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | File | Purpose |
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
+| `src/auth-state.ts` | In-memory Anthropic auth health tracker; broken/healthy transitions, notify-once |
 | `src/channels/registry.ts` | Channel registry (self-registration at startup) |
 | `src/channels/slack.ts` | Slack channel (Socket Mode DMs and mentions) |
 | `src/credential-proxy.ts` | HTTP proxy that injects API credentials into container requests |
@@ -159,3 +160,14 @@ Paste the printed public key into `scripts/rotate-account3.sh` as `RECIPIENT_PUB
 Expect a Slack confirmation within 5 minutes (`✓ Installed account3 <service> tokens`). On failure the watcher moves the file to `.errors/<timestamp>-<filename>` with a `.reason` sidecar and posts a Slack warning. Successful drops move to `.processed/<timestamp>-<filename>`.
 
 **Adding new file types:** edit the `MAPPING` table in `src/credential-drop-watcher.ts` — one entry per filename → target-path pair. The mapping table is the security boundary; the watcher writes only to paths it lists.
+
+## Anthropic Auth-State Tracking
+
+nanoclaw tracks the health of its Anthropic OAuth credentials with an in-memory state machine (`src/auth-state.ts`). On every container run, the result is inspected for the 401 `Failed to authenticate` marker:
+
+- **401 detected:** state transitions to `broken`. A single Slack DM is sent (`⚠ Anthropic auth failed (...). Run /login on the Mac Mini.`). Scheduled tasks are skipped while broken — no cron-driven 401 spam.
+- **Successful non-401 result:** state transitions to `healthy`. A single Slack DM is sent (`✓ Anthropic auth recovered.`).
+- **Repeated 401s while broken:** the raw 401 text is rewritten to a friendly user-facing message; no extra Slack notifications fire.
+- **nanoclaw restart:** state resets to `healthy` — the next container spawn re-establishes ground truth.
+
+The `.env` `CLAUDE_CODE_OAUTH_TOKEN` is still used as a warm-start fallback when Keychain refresh fails. To recover from a broken state, `/login` on the Mac Mini and the next message should succeed; the recovery notification confirms the fix.
