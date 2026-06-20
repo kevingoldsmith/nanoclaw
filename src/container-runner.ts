@@ -30,6 +30,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { markBroken, markHealthy } from './auth-state.js';
 import { RegisteredGroup } from './types.js';
 
 /** OAuth token refresh endpoint (same as Claude Code uses). */
@@ -220,6 +221,32 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+}
+
+const AUTH_401_PATTERN =
+  /Failed to authenticate\. API Error: 401|authentication_error.*Invalid authentication credentials/;
+const AUTH_BROKEN_FRIENDLY =
+  '⚠ Anthropic auth is broken. Run /login on the Mac Mini.';
+
+/**
+ * Inspect a ContainerOutput. If its result text indicates a 401 from
+ * Anthropic, mark auth as broken and rewrite the text to a friendly
+ * user-facing message. If it's a successful non-401 result, mark auth
+ * as healthy. Returns the (possibly rewritten) output.
+ *
+ * Only meaningful for status === 'success' outputs that have a result string.
+ * Progress, error, and null-result outputs are passed through unchanged.
+ */
+function applyAuthStateDetection(output: ContainerOutput): ContainerOutput {
+  if (output.status !== 'success' || !output.result) {
+    return output;
+  }
+  if (AUTH_401_PATTERN.test(output.result)) {
+    markBroken('401 from Anthropic API');
+    return { ...output, result: AUTH_BROKEN_FRIENDLY };
+  }
+  markHealthy();
+  return output;
 }
 
 interface VolumeMount {
@@ -652,12 +679,13 @@ export async function runContainerAgent(
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
             resetTimeout();
+            const inspected = applyAuthStateDetection(parsed);
             // Call onOutput for all markers (including null results)
             // so idle timers start even for "silent" query completions.
             // Catch errors so a single failed send doesn't break the chain
             // and silently drop all subsequent messages.
             outputChain = outputChain.then(() =>
-              onOutput(parsed).catch((err) => {
+              onOutput(inspected).catch((err) => {
                 logger.error(
                   { group: group.name, error: err },
                   'onOutput callback failed',
@@ -922,7 +950,7 @@ export async function runContainerAgent(
           'Container completed',
         );
 
-        resolve(output);
+        resolve(applyAuthStateDetection(output));
       } catch (err) {
         logger.error(
           {
