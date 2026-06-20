@@ -107,7 +107,8 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import { runContainerAgent, ContainerOutput, applyAuthStateDetection, AUTH_BROKEN_FRIENDLY } from './container-runner.js';
+import { _resetForTests as _resetAuthState, getAuthState } from './auth-state.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -227,5 +228,83 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+describe('container-runner: applyAuthStateDetection', () => {
+  beforeEach(() => {
+    _resetAuthState();
+  });
+
+  it('passes through non-success outputs unchanged', () => {
+    const errorOutput = {
+      status: 'error' as const,
+      result: 'Failed to authenticate. API Error: 401',
+      error: 'something',
+    };
+    expect(applyAuthStateDetection(errorOutput)).toBe(errorOutput);
+    expect(getAuthState()).toBe('healthy');
+
+    const progressOutput = {
+      status: 'progress' as const,
+      result: 'Failed to authenticate. API Error: 401',
+    };
+    expect(applyAuthStateDetection(progressOutput)).toBe(progressOutput);
+  });
+
+  it('passes through success outputs with null result unchanged', () => {
+    const out = { status: 'success' as const, result: null };
+    expect(applyAuthStateDetection(out)).toBe(out);
+    expect(getAuthState()).toBe('healthy');
+  });
+
+  it('detects the bare SDK 401 message and rewrites to friendly text', () => {
+    const out = {
+      status: 'success' as const,
+      result: 'Failed to authenticate. API Error: 401 terminated',
+    };
+    const result = applyAuthStateDetection(out);
+    expect(result.result).toBe(AUTH_BROKEN_FRIENDLY);
+    expect(getAuthState()).toBe('broken');
+  });
+
+  it('detects the JSON-shaped authentication_error payload and rewrites', () => {
+    const out = {
+      status: 'success' as const,
+      result:
+        'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_abc"}',
+    };
+    const result = applyAuthStateDetection(out);
+    expect(result.result).toBe(AUTH_BROKEN_FRIENDLY);
+    expect(getAuthState()).toBe('broken');
+  });
+
+  it('does NOT false-positive on user prose about authentication_error', () => {
+    const out = {
+      status: 'success' as const,
+      result:
+        'You may see an authentication_error in the logs when an Invalid authentication credentials situation occurs.',
+    };
+    const result = applyAuthStateDetection(out);
+    expect(result.result).toBe(out.result); // unchanged
+    expect(getAuthState()).toBe('healthy');
+  });
+
+  it('marks healthy on a successful non-401 result', () => {
+    // Set up broken state first so the transition can fire
+    const broken = {
+      status: 'success' as const,
+      result: 'Failed to authenticate. API Error: 401',
+    };
+    applyAuthStateDetection(broken);
+    expect(getAuthState()).toBe('broken');
+
+    const ok = {
+      status: 'success' as const,
+      result: 'Here is your answer about the weather.',
+    };
+    const result = applyAuthStateDetection(ok);
+    expect(result).toBe(ok);
+    expect(getAuthState()).toBe('healthy');
   });
 });

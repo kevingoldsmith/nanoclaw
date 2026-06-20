@@ -223,9 +223,9 @@ export interface ContainerOutput {
   error?: string;
 }
 
-const AUTH_401_PATTERN =
-  /Failed to authenticate\. API Error: 401|authentication_error.*Invalid authentication credentials/;
-const AUTH_BROKEN_FRIENDLY =
+export const AUTH_401_PATTERN =
+  /Failed to authenticate\. API Error: 401|"type"\s*:\s*"authentication_error"/;
+export const AUTH_BROKEN_FRIENDLY =
   '⚠ Anthropic auth is broken. Run /login on the Mac Mini.';
 
 /**
@@ -237,7 +237,10 @@ const AUTH_BROKEN_FRIENDLY =
  * Only meaningful for status === 'success' outputs that have a result string.
  * Progress, error, and null-result outputs are passed through unchanged.
  */
-function applyAuthStateDetection(output: ContainerOutput): ContainerOutput {
+export function applyAuthStateDetection(output: ContainerOutput): ContainerOutput {
+  // Only inspect 'success' results: the observed Anthropic 401 surfaces as a
+  // success-with-text reply (the SDK renders it as the assistant message),
+  // not as status='error'.
   if (output.status !== 'success' || !output.result) {
     return output;
   }
