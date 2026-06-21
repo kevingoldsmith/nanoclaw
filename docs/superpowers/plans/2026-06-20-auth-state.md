@@ -19,7 +19,7 @@
 | `src/auth-state.ts` | State machine + notify wiring (new) |
 | `src/auth-state.test.ts` | State transition tests (new) |
 | `src/container-runner.ts` | 401 detection + result rewrite + state transitions |
-| `src/container-runner.test.ts` | (file does not currently exist with logic tests — we will skip extending it to keep scope tight; the state-transition logic is unit-tested in `auth-state.test.ts`, and the container-runner integration is verified manually per the spec) |
+| `src/container-runner.test.ts` | New tests for `applyAuthStateDetection` (regex matching, state transitions, false-positive guards) |
 | `src/task-scheduler.ts` | Skip due tasks when state is broken |
 | `src/task-scheduler.test.ts` | Skip-when-broken test |
 | `src/index.ts` | Wire setNotify at startup |

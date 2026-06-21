@@ -245,6 +245,9 @@ export function applyAuthStateDetection(
   // Only inspect 'success' results: the observed Anthropic 401 surfaces as a
   // success-with-text reply (the SDK renders it as the assistant message),
   // not as status='error'.
+  // Truthiness check on result is intentional: a null result is the streaming
+  // completion sentinel, and an empty-string result is not a meaningful auth
+  // signal either direction — neither marks healthy nor broken.
   if (output.status !== 'success' || !output.result) {
     return output;
   }
