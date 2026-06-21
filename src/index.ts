@@ -804,10 +804,7 @@ async function main(): Promise<void> {
         }
       }
     }
-    logger.warn(
-      { text },
-      'auth-state: no connected channel for notification',
-    );
+    logger.warn({ text }, 'auth-state: no connected channel for notification');
   });
   startCredentialDropWatcher({
     dropDir: CREDENTIAL_DROP_DIR,

@@ -107,8 +107,16 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, ContainerOutput, applyAuthStateDetection, AUTH_BROKEN_FRIENDLY } from './container-runner.js';
-import { _resetForTests as _resetAuthState, getAuthState } from './auth-state.js';
+import {
+  runContainerAgent,
+  ContainerOutput,
+  applyAuthStateDetection,
+  AUTH_BROKEN_FRIENDLY,
+} from './container-runner.js';
+import {
+  _resetForTests as _resetAuthState,
+  getAuthState,
+} from './auth-state.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {

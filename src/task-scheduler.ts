@@ -286,9 +286,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   const loop = async () => {
     try {
       if (getAuthState() === 'broken') {
-        logger.warn(
-          'Skipping scheduled tasks tick: Anthropic auth is broken',
-        );
+        logger.warn('Skipping scheduled tasks tick: Anthropic auth is broken');
         setTimeout(loop, SCHEDULER_POLL_INTERVAL);
         return;
       }
