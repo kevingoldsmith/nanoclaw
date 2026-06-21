@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { _resetForTests as _resetAuthState, markBroken } from './auth-state.js';
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import {
   _resetSchedulerLoopForTests,
@@ -125,5 +126,53 @@ describe('task scheduler', () => {
     const offset =
       (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
+  });
+});
+
+describe('task scheduler: skips when auth is broken', () => {
+  beforeEach(() => {
+    _initTestDatabase();
+    _resetSchedulerLoopForTests();
+    _resetAuthState();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not enqueue due tasks when auth state is broken', async () => {
+    createTask({
+      id: 'task-auth-broken',
+      group_folder: 'main',
+      chat_jid: 'main@g.us',
+      prompt: 'run',
+      schedule_type: 'once',
+      schedule_value: '2026-06-20T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-06-20T00:00:00.000Z',
+    });
+
+    markBroken('test'); // notify defaults to no-op without setNotify
+
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+
+    startSchedulerLoop({
+      registeredGroups: () => ({}),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(enqueueTask).not.toHaveBeenCalled();
   });
 });

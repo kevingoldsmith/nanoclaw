@@ -2,6 +2,7 @@ import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
+import { getAuthState } from './auth-state.js';
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
   ContainerOutput,
@@ -284,6 +285,12 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
 
   const loop = async () => {
     try {
+      if (getAuthState() === 'broken') {
+        logger.warn('Skipping scheduled tasks tick: Anthropic auth is broken');
+        setTimeout(loop, SCHEDULER_POLL_INTERVAL);
+        return;
+      }
+
       const dueTasks = getDueTasks();
       if (dueTasks.length > 0) {
         logger.info({ count: dueTasks.length }, 'Found due tasks');

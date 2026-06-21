@@ -30,6 +30,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { markBroken, markHealthy } from './auth-state.js';
 import { RegisteredGroup } from './types.js';
 
 /** OAuth token refresh endpoint (same as Claude Code uses). */
@@ -220,6 +221,42 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+}
+
+// Anchored to start so a user quoting "Failed to authenticate. API Error: 401"
+// in their message (and the agent echoing it back) does NOT mark auth broken.
+// The real SDK error always begins with this exact phrase.
+export const AUTH_401_PATTERN = /^Failed to authenticate\. API Error: 401/;
+export const AUTH_BROKEN_FRIENDLY =
+  '⚠ Anthropic auth is broken. Run /login on the Mac Mini.';
+
+/**
+ * Inspect a ContainerOutput. If its result text indicates a 401 from
+ * Anthropic, mark auth as broken and rewrite the text to a friendly
+ * user-facing message. If it's a successful non-401 result, mark auth
+ * as healthy. Returns the (possibly rewritten) output.
+ *
+ * Only meaningful for status === 'success' outputs that have a result string.
+ * Progress, error, and null-result outputs are passed through unchanged.
+ */
+export function applyAuthStateDetection(
+  output: ContainerOutput,
+): ContainerOutput {
+  // Only inspect 'success' results: the observed Anthropic 401 surfaces as a
+  // success-with-text reply (the SDK renders it as the assistant message),
+  // not as status='error'.
+  // Truthiness check on result is intentional: a null result is the streaming
+  // completion sentinel, and an empty-string result is not a meaningful auth
+  // signal either direction — neither marks healthy nor broken.
+  if (output.status !== 'success' || !output.result) {
+    return output;
+  }
+  if (AUTH_401_PATTERN.test(output.result)) {
+    markBroken('401 from Anthropic API');
+    return { ...output, result: AUTH_BROKEN_FRIENDLY };
+  }
+  markHealthy();
+  return output;
 }
 
 interface VolumeMount {
@@ -652,12 +689,13 @@ export async function runContainerAgent(
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
             resetTimeout();
+            const inspected = applyAuthStateDetection(parsed);
             // Call onOutput for all markers (including null results)
             // so idle timers start even for "silent" query completions.
             // Catch errors so a single failed send doesn't break the chain
             // and silently drop all subsequent messages.
             outputChain = outputChain.then(() =>
-              onOutput(parsed).catch((err) => {
+              onOutput(inspected).catch((err) => {
                 logger.error(
                   { group: group.name, error: err },
                   'onOutput callback failed',
@@ -922,7 +960,7 @@ export async function runContainerAgent(
           'Container completed',
         );
 
-        resolve(output);
+        resolve(applyAuthStateDetection(output));
       } catch (err) {
         logger.error(
           {

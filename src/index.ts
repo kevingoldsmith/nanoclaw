@@ -21,6 +21,7 @@ import {
   stopCredentialDropWatcher,
 } from './credential-drop-watcher.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { setNotify as setAuthStateNotify } from './auth-state.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -769,6 +770,36 @@ async function main(): Promise<void> {
     logger.fatal('No channels connected');
     process.exit(1);
   }
+
+  // Wire auth-state notify BEFORE the scheduler starts. If a scheduler tick
+  // hits a 401 before setNotify is called, markBroken's notify-once guarantee
+  // would silently consume the only alert (the default no-op runs, state
+  // flips to broken, subsequent 401s no longer notify).
+  setAuthStateNotify(async (text: string) => {
+    // Prefer the main (control) group; fall back to any registered group.
+    // Iteration order of registeredGroups is otherwise arbitrary.
+    const entries = Object.entries(registeredGroups);
+    const ordered = [
+      ...entries.filter(([, g]) => g.isMain === true),
+      ...entries.filter(([, g]) => g.isMain !== true),
+    ];
+    for (const [jid] of ordered) {
+      for (const ch of channels) {
+        if (ch.isConnected() && ch.ownsJid(jid)) {
+          try {
+            await ch.sendMessage(jid, text);
+          } catch (err) {
+            logger.error(
+              { err, channel: ch.name },
+              'auth-state: failed to send notification',
+            );
+          }
+          return;
+        }
+      }
+    }
+    logger.warn({ text }, 'auth-state: no connected channel for notification');
+  });
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
