@@ -298,6 +298,19 @@ describe('container-runner: applyAuthStateDetection', () => {
     expect(getAuthState()).toBe('healthy');
   });
 
+  it('does NOT false-positive when 401 phrase is quoted mid-message', () => {
+    // The pattern is anchored to start, so the agent quoting the SDK error
+    // string in an explanatory reply does not trigger auth-broken.
+    const out = {
+      status: 'success' as const,
+      result:
+        'The SDK error "Failed to authenticate. API Error: 401" usually means your token is stale.',
+    };
+    const result = applyAuthStateDetection(out);
+    expect(result.result).toBe(out.result);
+    expect(getAuthState()).toBe('healthy');
+  });
+
   it('marks healthy on a successful non-401 result', () => {
     // Set up broken state first so the transition can fire
     const broken = {

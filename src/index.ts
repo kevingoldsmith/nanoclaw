@@ -789,7 +789,14 @@ async function main(): Promise<void> {
     },
   });
   setAuthStateNotify(async (text: string) => {
-    for (const [jid] of Object.entries(registeredGroups)) {
+    // Prefer the main (control) group; fall back to any registered group.
+    // Iteration order of registeredGroups is otherwise arbitrary.
+    const entries = Object.entries(registeredGroups);
+    const ordered = [
+      ...entries.filter(([, g]) => g.isMain === true),
+      ...entries.filter(([, g]) => g.isMain !== true),
+    ];
+    for (const [jid] of ordered) {
       for (const ch of channels) {
         if (ch.isConnected() && ch.ownsJid(jid)) {
           try {

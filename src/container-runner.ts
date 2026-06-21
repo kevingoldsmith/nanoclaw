@@ -223,7 +223,10 @@ export interface ContainerOutput {
   error?: string;
 }
 
-export const AUTH_401_PATTERN = /Failed to authenticate\. API Error: 401/;
+// Anchored to start so a user quoting "Failed to authenticate. API Error: 401"
+// in their message (and the agent echoing it back) does NOT mark auth broken.
+// The real SDK error always begins with this exact phrase.
+export const AUTH_401_PATTERN = /^Failed to authenticate\. API Error: 401/;
 export const AUTH_BROKEN_FRIENDLY =
   '⚠ Anthropic auth is broken. Run /login on the Mac Mini.';
 
