@@ -771,23 +771,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Start subsystems (independently of connection handler)
-  startSchedulerLoop({
-    registeredGroups: () => registeredGroups,
-    getSessions: () => sessions,
-    queue,
-    onProcess: (groupJid, proc, containerName, groupFolder) =>
-      queue.registerProcess(groupJid, proc, containerName, groupFolder),
-    sendMessage: async (jid, rawText) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) {
-        logger.warn({ jid }, 'No channel owns JID, cannot send message');
-        return;
-      }
-      const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
-    },
-  });
+  // Wire auth-state notify BEFORE the scheduler starts. If a scheduler tick
+  // hits a 401 before setNotify is called, markBroken's notify-once guarantee
+  // would silently consume the only alert (the default no-op runs, state
+  // flips to broken, subsequent 401s no longer notify).
   setAuthStateNotify(async (text: string) => {
     // Prefer the main (control) group; fall back to any registered group.
     // Iteration order of registeredGroups is otherwise arbitrary.
@@ -812,6 +799,24 @@ async function main(): Promise<void> {
       }
     }
     logger.warn({ text }, 'auth-state: no connected channel for notification');
+  });
+
+  // Start subsystems (independently of connection handler)
+  startSchedulerLoop({
+    registeredGroups: () => registeredGroups,
+    getSessions: () => sessions,
+    queue,
+    onProcess: (groupJid, proc, containerName, groupFolder) =>
+      queue.registerProcess(groupJid, proc, containerName, groupFolder),
+    sendMessage: async (jid, rawText) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) {
+        logger.warn({ jid }, 'No channel owns JID, cannot send message');
+        return;
+      }
+      const text = formatOutbound(rawText);
+      if (text) await channel.sendMessage(jid, text);
+    },
   });
   startCredentialDropWatcher({
     dropDir: CREDENTIAL_DROP_DIR,

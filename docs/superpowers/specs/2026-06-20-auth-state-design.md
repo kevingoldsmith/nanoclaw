@@ -60,21 +60,21 @@ Exports:
 - `getAuthState(): AuthState`
 - `markBroken(reason: string): void` — transitions only on `healthy → broken`. Logs and calls notify(`⚠ Anthropic auth failed (...). Run /login on the Mac Mini.`). No-op if already broken.
 - `markHealthy(): void` — transitions only on `broken → healthy`. Logs and calls notify(`✓ Anthropic auth recovered.`). No-op if already healthy.
-- `setNotifyForTests(fn): void` — test seam, called at startup with the real notify.
-- `_resetForTests(): void`
+- `setNotify(fn): void` — called at startup to wire the real Slack callback.
+- `_resetForTests(): void` — test seam.
 
 Internal state: a module-level `state: AuthState = 'healthy'` and a `notify` callback. Default state on cold start is `healthy` — we don't know yet, and the first failed spawn will transition us.
 
 ### Detection in `src/container-runner.ts`
 
-Add a post-spawn inspection of the container result (the existing `runContainerAgent` function builds a `ContainerOutput` with `text`, `error`, etc.).
+Add a post-spawn inspection of the container result (the existing `runContainerAgent` function builds a `ContainerOutput` with `status`, `result`, `error`, and optional `newSessionId`).
 
-- If the **agent result text** matches `/Failed to authenticate\. API Error: 401/`:
+- If the **agent result text** (`output.result`) matches `/^Failed to authenticate\. API Error: 401/`:
   - Call `markBroken(<reason>)` where `<reason>` is a short summary (e.g., "401 from Anthropic API").
   - **Rewrite** the result text to `⚠ Anthropic auth is broken. Run /login on the Mac Mini.` so the user sees the friendly version, not the raw 401 JSON.
 - If the result is **non-401 success** (`status === 'success'` and no auth-error marker): call `markHealthy()`.
 
-Detection lives in `runContainerAgent` because that's where the result is parsed. No new public API surface — call sites of `runContainerAgent` continue to receive `ContainerOutput` and consume `.text` as before.
+Detection lives in `runContainerAgent` because that's where the result is parsed. No new public API surface — call sites of `runContainerAgent` continue to receive `ContainerOutput` and consume `.result` as before.
 
 ### Scheduler skip in `src/task-scheduler.ts`
 
@@ -84,7 +84,7 @@ This is the change that stops the cron spam.
 
 ### Wiring in `src/index.ts`
 
-At startup, after `channels` are connected and `registeredGroups` is loaded, call `setNotify(...)` with a callback that mirrors the credential-drop watcher's notify pattern (`Object.entries(registeredGroups)` → first owning channel → `ch.sendMessage`). Tear down on shutdown isn't needed (in-memory state vanishes with the process).
+At startup, after `channels` are connected and `registeredGroups` is loaded but **before** `startSchedulerLoop` runs, call `setNotify(...)` with a callback that mirrors the credential-drop watcher's notify pattern (sort `Object.entries(registeredGroups)` to prefer `isMain` groups → first owning channel → `ch.sendMessage`). The "before scheduler" ordering matters: if a scheduler tick hits a 401 before notify is wired, the broken transition fires with the default no-op and the one-time alert is lost. Tear down on shutdown isn't needed (in-memory state vanishes with the process).
 
 ### Inbound messages
 
