@@ -64,6 +64,19 @@ describe('credential-drop-watcher: lookupTarget', () => {
     });
   });
 
+  it('maps gmail filename to the gmail credentials path', () => {
+    const result = lookupTarget('credentials-account3-gmail.json.age');
+    expect(result).toEqual({
+      target: path.join(
+        os.homedir(),
+        '.gmail-mcp-account3',
+        '.gmail-mcp',
+        'credentials.json',
+      ),
+      label: 'account3 gmail',
+    });
+  });
+
   it('returns null for unknown filename', () => {
     expect(lookupTarget('something-else.age')).toBeNull();
     expect(lookupTarget('tokens-account3-drive.json')).toBeNull(); // missing .age
@@ -101,6 +114,19 @@ describe('credential-drop-watcher: validateTokensJson', () => {
   it('rejects empty input', () => {
     const r = validateTokensJson(Buffer.alloc(0));
     expect(r.ok).toBe(false);
+  });
+
+  it('accepts a flat Gmail credentials.json (top-level refresh_token)', () => {
+    const buf = Buffer.from(
+      JSON.stringify({
+        access_token: 'ya29.example',
+        refresh_token: '1//example-refresh',
+        scope: 'https://www.googleapis.com/auth/gmail.modify',
+        token_type: 'Bearer',
+        expiry_date: 1783555490203,
+      }),
+    );
+    expect(validateTokensJson(buf)).toEqual({ ok: true });
   });
 });
 

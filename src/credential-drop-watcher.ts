@@ -30,6 +30,15 @@ const MAPPING: Record<string, DropTarget> = {
     ),
     label: 'account3 calendar',
   },
+  'credentials-account3-gmail.json.age': {
+    target: path.join(
+      HOME,
+      '.gmail-mcp-account3',
+      '.gmail-mcp',
+      'credentials.json',
+    ),
+    label: 'account3 gmail',
+  },
 };
 
 export function lookupTarget(filename: string): DropTarget | null {
