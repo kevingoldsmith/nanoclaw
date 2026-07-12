@@ -155,7 +155,14 @@ Paste the printed public key into `scripts/rotate-account3.sh` as `RECIPIENT_PUB
 ```bash
 ./scripts/rotate-account3.sh drive
 ./scripts/rotate-account3.sh calendar
+./scripts/rotate-account3.sh gmail
 ```
+
+Gmail account3 uses the same flow. Its drop file is `credentials-account3-gmail.json.age`
+(note the `credentials-` prefix vs `tokens-` for Drive/Calendar) and installs to
+`~/.gmail-mcp-account3/.gmail-mcp/credentials.json`. The gmail auth step runs the local
+fork in `container/mcp-servers/gmail`, so the laptop needs this repo checked out and
+`npm install` run once in that dir.
 
 Expect a Slack confirmation within 5 minutes (`✓ Installed account3 <service> tokens`). On failure the watcher moves the file to `.errors/<timestamp>-<filename>` with a `.reason` sidecar and posts a Slack warning. Successful drops move to `.processed/<timestamp>-<filename>`.
 
