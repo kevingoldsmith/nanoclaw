@@ -1,6 +1,12 @@
 # Gmail account3 — give it its own Testing-mode OAuth client (setup runbook)
 
-**Status:** parked (2026-07-11), to do from a real workstation.
+**Status:** ✅ completed 2026-08-01. Gmail account3 now runs on its own isolated
+Testing-mode client — project `nanoclaw-gmail-account3`, client_id `510881212191-…`.
+Keys installed at `~/.gmail-mcp-account3/.gmail-mcp/gcp-oauth.keys.json` (old shared-client
+keys backed up alongside as `.shared-639974594587.bak-*`); token minted and refresh-verified
+(both `gmail.modify` + `gmail.settings.basic` granted). Note: the Gmail refresh did **not**
+report a `refresh_token_expires_in`, so unlike Drive/Calendar it may not carry the 7-day
+Testing expiry — confirm over the first week. Steps below retained as the reference/rotation runbook.
 **Context:** account3 = `kevin@distrokid.com` (DistroKid Workspace).
 
 ## Why this is needed
