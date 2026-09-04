@@ -21,10 +21,14 @@ groups/global/*
 # Secrets
 *.keys.json
 .env
+.env.bak*
 foursquare.txt
 
 # Temp files
 .tmp-*
+
+# Runtime locks (.claude/skills and settings.json stay tracked)
+.claude/scheduled_tasks.lock
 
 # OS
 .DS_Store
