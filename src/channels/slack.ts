@@ -85,7 +85,54 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
   const FLAP_WINDOW_MS = 120_000;
   const FLAP_THRESHOLD = 5;
   const recentDisconnects: number[] = [];
+  // Downtime watchdog. The flap detector above only counts 'disconnected'
+  // events, which leaves two real failure shapes invisible:
+  //   1. socket emits 'connecting' and wedges — never 'connected', never
+  //      'disconnected' (observed 2026-09-03, inbound dead ~19h).
+  //   2. socket churns 'connecting' -> 'reconnecting' -> 'connecting' every
+  //      ~15s without ever completing a handshake — also no 'disconnected'.
+  // Both leave inbound Slack dead while the process looks healthy and
+  // outbound (Web API over HTTP) keeps working, so the failure is silent.
+  //
+  // So the watchdog measures one thing: how long have we gone without a
+  // successful 'connected'? Armed when downtime starts, and — critically —
+  // NOT re-armed by subsequent 'connecting'/'disconnected' events, or a
+  // churn loop would reset the clock forever and never fire. Only a real
+  // 'connected' clears it. Then force-exit so launchd (KeepAlive=true)
+  // respawns with a clean socket.
+  //
+  // 300s is deliberately generous: a real handshake was observed taking 51s,
+  // and reconnect backoff maxes at 60s, so a healthy recovery finishes well
+  // inside the window. Five minutes of no inbound Slack is unambiguously broken.
+  const SOCKET_DOWN_TIMEOUT_MS = 300_000;
+  let downtimeTimer: NodeJS.Timeout | null = null;
   let shuttingDown = false;
+
+  function armDowntimeWatchdog(): void {
+    // Already counting, or nothing to count — leave the existing clock alone.
+    if (downtimeTimer || shuttingDown) return;
+    downtimeTimer = setTimeout(() => {
+      downtimeTimer = null;
+      // Only 'connected' clears this timer, so reaching here means no
+      // successful handshake for the whole window. Note the module-level
+      // `connected` flag is NOT a valid check: connect() sets it
+      // optimistically after app.start(), so it stays true across a later
+      // wedged or churning re-handshake.
+      if (shuttingDown) return;
+      logger.fatal(
+        { downMs: SOCKET_DOWN_TIMEOUT_MS },
+        'Slack socket down too long — exiting so launchd respawns a fresh socket',
+      );
+      process.exit(1);
+    }, SOCKET_DOWN_TIMEOUT_MS);
+  }
+
+  function clearDowntimeWatchdog(): void {
+    if (downtimeTimer) {
+      clearTimeout(downtimeTimer);
+      downtimeTimer = null;
+    }
+  }
 
   // The App + SocketModeClient pair is recreated on reconnect
   let app = createApp();
@@ -108,11 +155,13 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
   function attachSocketListeners(client: SocketModeClient): void {
     client.on('connecting', () => {
       logger.info('Slack socket connecting');
+      armDowntimeWatchdog();
     });
 
     client.on('connected', () => {
       logger.info('Slack socket connected');
       connected = true;
+      clearDowntimeWatchdog();
       // Defer backoff reset until the connection has held for STABILITY_DELAY_MS.
       // A flapping socket that disconnects before that timer fires keeps the
       // exponential backoff growing.
@@ -130,6 +179,7 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
 
     client.on('disconnected', async (err?: Error) => {
       connected = false;
+      armDowntimeWatchdog();
       if (stabilityTimer) {
         clearTimeout(stabilityTimer);
         stabilityTimer = null;
@@ -545,6 +595,7 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
 
     async disconnect(): Promise<void> {
       shuttingDown = true;
+      clearDowntimeWatchdog();
       await app.stop();
       connected = false;
       logger.info('Slack channel disconnected');

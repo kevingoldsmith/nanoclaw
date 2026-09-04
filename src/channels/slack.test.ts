@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // ---- mocks (must be before any imports that trigger them) ----
 
@@ -10,6 +10,7 @@ vi.mock('../logger.js', () => ({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+    fatal: vi.fn(),
   },
 }));
 
@@ -221,6 +222,114 @@ describe('Slack channel', () => {
         'msg',
       );
       expect(ts).toBe('1234.5678');
+    });
+  });
+
+  describe('downtime watchdog', () => {
+    // The flap detector only counts 'disconnected' events, so it is blind to
+    // a socket that wedges in 'connecting' or churns without ever completing
+    // a handshake. Neither emits 'disconnected'.
+    function handlersFor(event: string): Array<(...args: unknown[]) => void> {
+      return mockReceiverClientOn.mock.calls
+        .filter((c) => c[0] === event)
+        .map((c) => c[1] as (...args: unknown[]) => void);
+    }
+
+    function fire(event: string): void {
+      handlersFor(event).forEach((h) => h());
+    }
+
+    let exitSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      exitSpy = vi
+        .spyOn(process, 'exit')
+        .mockImplementation((() => undefined) as never);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      exitSpy.mockRestore();
+    });
+
+    it('exits when a handshake never completes', async () => {
+      const channel = makeChannel()!;
+      await channel.connect();
+
+      fire('connecting');
+      await vi.advanceTimersByTimeAsync(299_000);
+      expect(exitSpy).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('exits when the socket churns without ever connecting', async () => {
+      // Observed live: connecting -> reconnecting -> connecting every ~15s,
+      // never reaching 'connected'. A watchdog re-armed on each 'connecting'
+      // would reset its clock forever and never fire.
+      const channel = makeChannel()!;
+      await channel.connect();
+
+      fire('connecting');
+      for (let elapsed = 0; elapsed < 300_000; elapsed += 15_000) {
+        await vi.advanceTimersByTimeAsync(15_000);
+        fire('reconnecting');
+        fire('connecting');
+      }
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('does not exit when the handshake completes in time', async () => {
+      const channel = makeChannel()!;
+      await channel.connect();
+
+      fire('connecting');
+      await vi.advanceTimersByTimeAsync(51_000); // observed real-world handshake
+      fire('connected');
+
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not exit when a disconnect recovers within the window', async () => {
+      const channel = makeChannel()!;
+      await channel.connect();
+
+      fire('connecting');
+      fire('connected');
+      fire('disconnected');
+      await vi.advanceTimersByTimeAsync(60_000);
+      fire('connecting');
+      fire('connected');
+
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it('exits when a disconnect never recovers', async () => {
+      const channel = makeChannel()!;
+      await channel.connect();
+
+      fire('connecting');
+      fire('connected');
+      fire('disconnected');
+
+      await vi.advanceTimersByTimeAsync(301_000);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('does not exit when shutting down mid-handshake', async () => {
+      const channel = makeChannel()!;
+      await channel.connect();
+
+      fire('connecting');
+      await channel.disconnect();
+
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(exitSpy).not.toHaveBeenCalled();
     });
   });
 });

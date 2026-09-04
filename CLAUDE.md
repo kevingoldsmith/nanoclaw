@@ -95,6 +95,15 @@ systemctl --user restart nanoclaw
 
 **Slack socket flap auto-restart:** If the Slack socket disconnects 5+ times within 2 minutes (e.g. after a network blip leaves Slack's side in a half-open state), the channel logs `Slack socket flapping — exiting so launchd respawns a fresh socket` at fatal level and calls `process.exit(1)`. The launchd plist's `KeepAlive=true` then respawns the process with a clean socket. A normal `connected` event no longer resets the reconnect backoff immediately — it only resets after the connection has held for 60s, so a flapping socket actually backs off instead of retrying every second. Both knobs live in `src/channels/slack.ts` (`STABILITY_DELAY_MS`, `FLAP_WINDOW_MS`, `FLAP_THRESHOLD`).
 
+**Slack socket downtime auto-restart:** the flap detector above only counts `disconnected` events, which leaves two real failure shapes invisible — both observed live:
+
+1. the socket emits `connecting` and wedges, never reaching `connected` and never emitting `disconnected` (2026-09-03: inbound dead ~19h);
+2. the socket churns `connecting` → `reconnecting` → `connecting` every ~15s without ever completing a handshake (2026-09-04, self-healed after 93s).
+
+Either leaves inbound Slack dead while the process looks healthy and outbound (Web API over HTTP) keeps working — so scheduled-task messages still arrive and the failure is silent. `src/channels/slack.ts` now measures one thing: time since the last successful `connected`. The watchdog is armed when downtime starts and is **not** re-armed by later `connecting`/`disconnected` events (a churn loop would otherwise reset the clock forever and never fire); only a real `connected` clears it. On expiry it logs fatal and `process.exit(1)` so launchd respawns a clean socket.
+
+`SOCKET_DOWN_TIMEOUT_MS` is 300s, deliberately generous: a real handshake was observed taking 51s, reconnect backoff maxes at 60s, and the observed churn episode self-healed at 93s — a 120s threshold would have force-exited that unnecessarily. Note the module-level `connected` flag is *not* a valid completion check inside the watchdog: `connect()` sets it optimistically after `app.start()`, so it stays true across a later wedged re-handshake. **Triage:** `grep "Slack socket" ~/Library/Logs/nanoclaw/nanoclaw.log | tail` — a trailing `connecting` with no `connected` after it means a wedge.
+
 ## Skill Model Override
 
 Skills in `skills_for_nanoclaw/` can specify `model: claude-opus-4-6` (or any model string) in their SKILL.md frontmatter. The agent-runner detects skill references in the prompt, reads the frontmatter, and passes the model to the SDK `query()` call.
