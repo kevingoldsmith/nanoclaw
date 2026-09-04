@@ -75,6 +75,16 @@ export const CREDENTIAL_DROP_INTERVAL_MS = parseInt(
   process.env.CREDENTIAL_DROP_INTERVAL_MS || '300000',
   10,
 );
+// Credential expiry watcher: warns before account3's Testing-mode refresh
+// tokens hit their hard 7-day expiry. Default 6h cadence, 2-day warning.
+export const CREDENTIAL_EXPIRY_INTERVAL_MS = parseInt(
+  process.env.CREDENTIAL_EXPIRY_INTERVAL_MS || '21600000',
+  10,
+);
+export const CREDENTIAL_EXPIRY_WARN_SECONDS = parseInt(
+  process.env.CREDENTIAL_EXPIRY_WARN_SECONDS || '172800',
+  10,
+);
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,

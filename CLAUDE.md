@@ -168,6 +168,25 @@ Expect a Slack confirmation within 5 minutes (`✓ Installed account3 <service> 
 
 **Adding new file types:** edit the `MAPPING` table in `src/credential-drop-watcher.ts` — one entry per filename → target-path pair. The mapping table is the security boundary; the watcher writes only to paths it lists.
 
+## Credential Expiry Watcher
+
+account3's Testing-mode OAuth clients issue refresh tokens with a hard 7-day expiry, and **refreshing does not mint a new one** — the window can only be reset by a browser re-consent. `src/credential-expiry-watcher.ts` polls all three account3 credentials and posts a Slack warning before they die.
+
+The trap it exists to catch: running the MCP `auth` command with a valid `tokens.json` still present silently refreshes the *access* token and prints `Authentication successful.` **without opening a browser**. A calendar reminder therefore reports success while the refresh token keeps counting down. `scripts/rotate-account3.sh` avoids this by moving the token file aside first.
+
+**Config (`.env`):**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CREDENTIAL_EXPIRY_INTERVAL_MS` | `21600000` (6h) | Check cadence |
+| `CREDENTIAL_EXPIRY_WARN_SECONDS` | `172800` (2 days) | Warn when remaining life drops below this |
+
+Each check exchanges the refresh token purely to read `refresh_token_expires_in` (the only place Google reports remaining refresh-token life), then discards the access token. No file is written.
+
+Statuses: `expiring` / `dead` (invalid_grant) / `missing` each notify **once** per transition, and a `✓ … renewed` message fires after a successful rotation. Transient failures (network, 5xx) are logged as `unknown` and never notify, nor do they clear an armed warning.
+
+**Gmail caveat:** the gmail account3 client does not report `refresh_token_expires_in`, so it gets no countdown — it is only alerted on when a refresh actually fails. Drive and calendar both report the 7-day window.
+
 ## Anthropic Auth-State Tracking
 
 nanoclaw tracks the health of its Anthropic OAuth credentials with an in-memory state machine (`src/auth-state.ts`). On every container run, the result is inspected for the 401 `Failed to authenticate` marker:

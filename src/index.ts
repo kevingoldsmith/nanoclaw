@@ -7,6 +7,8 @@ import {
   ASSISTANT_NAME,
   CREDENTIAL_DROP_DIR,
   CREDENTIAL_DROP_INTERVAL_MS,
+  CREDENTIAL_EXPIRY_INTERVAL_MS,
+  CREDENTIAL_EXPIRY_WARN_SECONDS,
   CREDENTIAL_PROXY_PORT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
@@ -20,6 +22,10 @@ import {
   startCredentialDropWatcher,
   stopCredentialDropWatcher,
 } from './credential-drop-watcher.js';
+import {
+  startCredentialExpiryWatcher,
+  stopCredentialExpiryWatcher,
+} from './credential-expiry-watcher.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { setNotify as setAuthStateNotify } from './auth-state.js';
 import './channels/index.js';
@@ -635,6 +641,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     stopCredentialDropWatcher();
+    stopCredentialExpiryWatcher();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -818,33 +825,45 @@ async function main(): Promise<void> {
       if (text) await channel.sendMessage(jid, text);
     },
   });
-  startCredentialDropWatcher({
-    dropDir: CREDENTIAL_DROP_DIR,
-    identityFile: AGE_IDENTITY_FILE,
-    intervalMs: CREDENTIAL_DROP_INTERVAL_MS,
-    notify: async (text: string) => {
-      // Send to the first registered group on whichever channel owns it.
-      // Mirrors the pattern used by the connection-status notifier above.
+  // Send to the first registered group on whichever channel owns it.
+  // Mirrors the pattern used by the connection-status notifier above.
+  // Resolves true only when the message actually reached a channel, so
+  // callers can distinguish "warned" from "nobody was listening yet".
+  const notifyFirstGroup =
+    (source: string) =>
+    async (text: string): Promise<boolean> => {
       for (const [jid] of Object.entries(registeredGroups)) {
         for (const ch of channels) {
           if (ch.isConnected() && ch.ownsJid(jid)) {
             try {
               await ch.sendMessage(jid, text);
+              return true;
             } catch (err) {
               logger.error(
                 { err, channel: ch.name },
-                'credential-drop-watcher: failed to send notification',
+                `${source}: failed to send notification`,
               );
+              return false;
             }
-            return;
           }
         }
       }
-      logger.warn(
-        { text },
-        'credential-drop-watcher: no connected channel for notification',
-      );
+      logger.warn({ text }, `${source}: no connected channel for notification`);
+      return false;
+    };
+
+  startCredentialDropWatcher({
+    dropDir: CREDENTIAL_DROP_DIR,
+    identityFile: AGE_IDENTITY_FILE,
+    intervalMs: CREDENTIAL_DROP_INTERVAL_MS,
+    notify: async (text: string) => {
+      await notifyFirstGroup('credential-drop-watcher')(text);
     },
+  });
+  startCredentialExpiryWatcher({
+    intervalMs: CREDENTIAL_EXPIRY_INTERVAL_MS,
+    warnThresholdSeconds: CREDENTIAL_EXPIRY_WARN_SECONDS,
+    notify: notifyFirstGroup('credential-expiry-watcher'),
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {
