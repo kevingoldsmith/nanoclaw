@@ -21,15 +21,45 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const threshold =
   LEVELS[(process.env.LOG_LEVEL as Level) || 'info'] ?? LEVELS.info;
 
-// LOG_DIR enables a rotated file at <LOG_DIR>/nanoclaw.log alongside
-// console output. Defaults to ~/Library/Logs/nanoclaw on macOS; set
-// LOG_DIR="" to disable file logging (e.g. on Linux/systemd where
-// journald captures stdout).
-const LOG_DIR =
-  process.env.LOG_DIR ??
-  (process.platform === 'darwin' && process.env.HOME
-    ? join(process.env.HOME, 'Library/Logs/nanoclaw')
-    : '');
+/**
+ * Test runners import this module transitively, so without a guard every
+ * `npm test` appends to the real ~/Library/Logs/nanoclaw/nanoclaw.log. That
+ * mixes states the tests *fabricate* — dead credentials, "Anthropic auth is
+ * broken" — into the log used to triage live incidents, where they read as
+ * genuine outages.
+ *
+ * Detected from the runners' own markers as well as NODE_ENV, so the guard
+ * holds even if a suite never sets NODE_ENV.
+ */
+export function isTestEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    env.VITEST !== undefined ||
+    env.JEST_WORKER_ID !== undefined ||
+    env.NODE_ENV === 'test'
+  );
+}
+
+/**
+ * LOG_DIR enables a rotated file at <LOG_DIR>/nanoclaw.log alongside console
+ * output. Defaults to ~/Library/Logs/nanoclaw on macOS; set LOG_DIR="" to
+ * disable file logging (e.g. on Linux/systemd where journald captures stdout).
+ *
+ * An explicit LOG_DIR always wins, tests included — that is how a test points
+ * file logging at a temp dir. Only the *default* is suppressed under test.
+ */
+export function resolveLogDir(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: string = process.platform,
+): string {
+  if (env.LOG_DIR !== undefined) return env.LOG_DIR;
+  if (isTestEnv(env)) return '';
+  if (platform === 'darwin' && env.HOME) {
+    return join(env.HOME, 'Library/Logs/nanoclaw');
+  }
+  return '';
+}
+
+const LOG_DIR = resolveLogDir();
 
 let fileStream: RotatingFileStream | null = null;
 

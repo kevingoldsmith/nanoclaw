@@ -89,6 +89,12 @@ systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
 
+## Logging
+
+Console always; on macOS also a rotated file at `~/Library/Logs/nanoclaw/nanoclaw.log` (`LOG_DIR` overrides the location, `LOG_DIR=""` disables the file — the Linux/systemd default, where journald captures stdout).
+
+**Test runs never write that file.** `resolveLogDir()` in `src/logger.ts` suppresses the default under vitest, jest, or `NODE_ENV=test`. Without this, every `npm test` appended to the real log — including states the tests fabricate (`account3 drive: dead`, `Skipping scheduled tasks tick: Anthropic auth is broken`), which read as genuine outages when triaging. An explicit `LOG_DIR` still wins, including in tests, so a test can point file logging at a temp dir on purpose.
+
 ## Troubleshooting
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
