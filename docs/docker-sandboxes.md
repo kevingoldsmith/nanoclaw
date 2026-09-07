@@ -194,8 +194,10 @@ bash container/build.sh
 ### Telegram
 
 ```bash
-# Apply the Telegram skill
-npx tsx scripts/apply-skill.ts .claude/skills/add-telegram
+# Apply the Telegram skill (skills are git branches; see docs/skills-as-branches.md)
+git remote add telegram https://github.com/qwibitai/nanoclaw-telegram.git
+git fetch telegram main
+git merge telegram/main
 
 # Rebuild after applying the skill
 npm run build
@@ -234,8 +236,10 @@ curl -s --proxy $HTTPS_PROXY "https://api.telegram.org/bot<TOKEN>/getUpdates" | 
 Make sure you configured proxy bypass in [Step 1](#step-1-create-the-sandbox) first.
 
 ```bash
-# Apply the WhatsApp skill
-npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp
+# Apply the WhatsApp skill (skills are git branches; see docs/skills-as-branches.md)
+git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git
+git fetch whatsapp main
+git merge whatsapp/main
 
 # Rebuild
 npm run build
