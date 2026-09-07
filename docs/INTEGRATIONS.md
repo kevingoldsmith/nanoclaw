@@ -131,22 +131,43 @@ GOOGLE_DRIVE_OAUTH_CREDENTIALS="$HOME/.gmail-mcp-accountN/.gmail-mcp/gcp-oauth.k
   npx @piotr-agier/google-drive-mcp auth
 ```
 
-### Foursquare / Swarm
-**Package:** Local MCP server at `container/mcp-servers/foursquare/` (built into container image)
-**Type:** Stdio MCP (OAuth user token)
-**Configuration:** `.env` file → `FOURSQUARE_TOKEN`
+### Check-in App
+**Package:** Local MCP server at `container/mcp-servers/checkin/` (built into container image)
+**Type:** Stdio MCP (OAuth2 client credentials)
+**Configuration:** `.env` file → `CHECKIN_APP_TOKEN_ENDPOINT`, `CHECKIN_APP_AGENT_CLIENT_ID`, `CHECKIN_APP_SECRET`, `CHECKIN_APP_API`
 
-**API:** Foursquare v2 — free tier covers checkins, users, tips endpoints. Token is long-lived and does not expire.
+**API:** Kevin's own check-in app. The server POSTs to the Cognito token
+endpoint for a short-lived access token, then calls `GET /checkins/latest`.
+Tokens are cached in memory until 60s before expiry and are never written to
+disk.
+
+**Scope:** The agent credential holds `checkin-api/latest.read` and nothing
+else. It reaches `GET /checkins/latest` only — a **403 on any other route
+(including `POST /diagnostics`, which exposes full GPS) is the design working**,
+not a bug. Rotating or revoking this client in Cognito cuts the agent off
+without touching Kevin's own app login. The secret lives only in `.env` on the
+host; it is never committed to this repo or shared with the client app.
 
 **Tools available:**
-- `get_last_checkin` - Fetch the most recent check-in
-- `get_recent_checkins` - Fetch recent check-ins (1–50, configurable count)
+- `get_last_checkin` - The most recent check-in (place, locality, coordinates, note, `created_at`)
 
-**Container path:** `/app/mcp-servers/foursquare/dist/index.js`
+**Response shape:** `checkin_id`, `place_id`, `place_name`, `place_lat`,
+`place_lon`, `locality`, `country`, `note`, `created_at`. Nothing else — there
+is no check-in history endpoint, so there is no "recent check-ins" tool.
+
+**Empty state:** An empty table returns HTTP 404 `{"detail":"no check-ins yet"}`.
+The server treats this as an ordinary outcome and reports "No check-ins yet",
+not an error.
+
+**Freshness:** `created_at` is the honest signal. A check-in is where Kevin last
+*chose* to check in, possibly days ago. The tool output instructs the agent to
+phrase answers with the timestamp.
+
+**Container path:** `/app/mcp-servers/checkin/dist/index.js`
 
 **Usage examples:**
-- "Where did I last check in on Swarm?"
-- "Show my recent check-ins"
+- "Where did Kevin last check in?"
+- "Where is Kevin?" → answered as "last checked in at X on <time>"
 
 ### Joplin Notes
 **Package:** `joplin-mcp-server@2.1.0`

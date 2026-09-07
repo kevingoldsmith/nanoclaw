@@ -63,12 +63,16 @@ You have access to the same 3 Google accounts for Calendar via MCP tools:
 - "Show me my events for next week on my personal calendar"
 - "Find all meetings with John in my work calendar"
 
-### Foursquare / Swarm (Location)
+### Check-in App (Location)
 
-You can check Kevin's recent Swarm check-ins to know his current or recent location:
+Kevin's own check-in app records where he has chosen to check in:
 
-- `mcp__foursquare__get_last_checkin` - Most recent check-in (venue, address, coordinates, time)
-- `mcp__foursquare__get_recent_checkins` - Recent check-ins (accepts `count` param, 1-50)
+- `mcp__checkin__get_last_checkin` - Most recent check-in (place, locality, coordinates, note, time)
+
+**Always report this with its timestamp.** A check-in is a deliberate act that
+may be hours or days old, not a live location feed. Say "Kevin last checked in
+at Yuzen on Saturday evening" — never "Kevin is at Yuzen". If he has never
+checked in, the tool says so plainly; that is a normal answer, not a failure.
 
 ### Google Drive (3 accounts)
 

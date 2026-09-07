@@ -26,7 +26,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `src/transcription.ts` | Audio transcription via OpenAI Whisper |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 | `container/skills/` | Skills loaded inside agent containers (browser, status, formatting) |
-| `container/mcp-servers/foursquare/` | Foursquare/Swarm check-in MCP server (local) |
+| `container/mcp-servers/checkin/` | Check-in app MCP server (local, OAuth2 client credentials) |
 | `container/mcp-servers/gmail/` | Gmail MCP server (local fork, auto-persists refreshed tokens) |
 | `skills_for_nanoclaw/` | User skills synced into containers on each spawn (source of truth) |
 
@@ -37,7 +37,7 @@ Two auth modes for the Anthropic API, configured via `.env`:
 - **API key mode** (`ANTHROPIC_API_KEY` set): Uses the credential proxy (`src/credential-proxy.ts`) on port 3001. Containers get `ANTHROPIC_BASE_URL` pointing to the proxy and a placeholder key; the proxy substitutes the real key at the transport layer.
 - **OAuth mode** (`CLAUDE_CODE_OAUTH_TOKEN` set, no API key): Token is passed directly to containers. The SDK handles OAuth auth internally (token exchange, refresh). The agent-runner's `createSanitizeBashHook` strips the token from Bash subprocesses. OAuth tokens are refreshed by Claude Code and stored in the macOS Keychain (`security find-generic-password -s "Claude Code-credentials" -w`). If the token in `.env` becomes stale, pull the fresh one from Keychain.
 
-MCP integration secrets (Todoist, Foursquare, Joplin, etc.) are passed as container env vars, read from `.env` by the container runner.
+MCP integration secrets (Todoist, check-in app, Joplin, etc.) are passed as container env vars, read from `.env` by the container runner.
 
 ## MCP Server Selection
 
@@ -88,6 +88,12 @@ systemctl --user start nanoclaw
 systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
+
+## Logging
+
+Console always; on macOS also a rotated file at `~/Library/Logs/nanoclaw/nanoclaw.log` (`LOG_DIR` overrides the location, `LOG_DIR=""` disables the file — the Linux/systemd default, where journald captures stdout).
+
+**Test runs never write that file.** `resolveLogDir()` in `src/logger.ts` suppresses the default under vitest, jest, or `NODE_ENV=test`. Without this, every `npm test` appended to the real log — including states the tests fabricate (`account3 drive: dead`, `Skipping scheduled tasks tick: Anthropic auth is broken`), which read as genuine outages when triaging. An explicit `LOG_DIR` still wins, including in tests, so a test can point file logging at a temp dir on purpose.
 
 ## Troubleshooting
 
@@ -196,6 +202,8 @@ Statuses: `expiring` / `dead` (invalid_grant) / `missing` each notify **once** p
 
 **Gmail caveat:** the gmail account3 client does not report `refresh_token_expires_in`, so it gets no countdown — it is only alerted on when a refresh actually fails. Drive and calendar both report the 7-day window.
 
+**Anthropic `.env` fallback:** the same watcher also probes `CLAUDE_CODE_OAUTH_TOKEN` from `.env` with `GET /v1/models?limit=1` (authenticates without consuming inference). This is the fallback `container-runner` uses only when the Keychain read or refresh fails — see [Anthropic Auth-State Tracking](#anthropic-auth-state-tracking). Because it is hand-copied and the Keychain token rotates every few hours, it rots silently and the rot surfaces only during a Keychain failure, when it is needed most. Statuses are `dead` (401/403) and `missing` (not set); 5xx and network errors report `unknown` and never notify. In API-key mode the check does not apply and is skipped entirely. Fix with `./scripts/sync-oauth-fallback.sh`, which pulls the current Keychain token, **verifies it before writing**, backs up `.env`, and replaces the key atomically. The alert deliberately leads with "agents are unaffected right now" — it fires while everything is working.
+
 ## Anthropic Auth-State Tracking
 
 nanoclaw tracks the health of its Anthropic OAuth credentials with an in-memory state machine (`src/auth-state.ts`). On every container run, the result is inspected for the 401 `Failed to authenticate` marker:
@@ -205,4 +213,4 @@ nanoclaw tracks the health of its Anthropic OAuth credentials with an in-memory 
 - **Repeated 401s while broken:** the raw 401 text is rewritten to a friendly user-facing message; no extra Slack notifications fire.
 - **nanoclaw restart:** state resets to `healthy` — the next container spawn re-establishes ground truth.
 
-The `.env` `CLAUDE_CODE_OAUTH_TOKEN` is still used as a warm-start fallback when Keychain refresh fails. To recover from a broken state, `/login` on the Mac Mini and the next message should succeed; the recovery notification confirms the fix.
+The `.env` `CLAUDE_CODE_OAUTH_TOKEN` is still used as a warm-start fallback when Keychain refresh fails. That path now logs at **error** level when it is taken (`Keychain OAuth token unavailable — using the .env fallback`), because otherwise a Keychain failure is invisible and shows up only as a 401 inside the container. The fallback's own health is checked every 6h by the [Credential Expiry Watcher](#credential-expiry-watcher). To recover from a broken state, `/login` on the Mac Mini and the next message should succeed; the recovery notification confirms the fix.

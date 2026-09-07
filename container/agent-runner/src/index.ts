@@ -224,7 +224,10 @@ const SECRET_ENV_VARS = [
   'JOPLIN_TOKEN',
   'OPEN_BRAIN_KEY',
   'OPEN_BRAIN_URL',
-  'FOURSQUARE_TOKEN',
+  'CHECKIN_APP_TOKEN_ENDPOINT',
+  'CHECKIN_APP_AGENT_CLIENT_ID',
+  'CHECKIN_APP_SECRET',
+  'CHECKIN_APP_API',
 ];
 
 function createSanitizeBashHook(): HookCallback {
@@ -600,7 +603,7 @@ async function runQuery(
         'NotebookEdit',
         'mcp__nanoclaw__*',
         'mcp__todoist__*',
-        'mcp__foursquare__*',
+        'mcp__checkin__*',
         'mcp__gmail_account1__*',
         'mcp__gmail_account2__*',
         'mcp__gmail_account3__*',
@@ -640,11 +643,19 @@ async function runQuery(
             env: { TODOIST_API_KEY: sdkEnv.TODOIST_API_KEY },
           },
         } : {}),
-        ...(sdkEnv.FOURSQUARE_TOKEN ? {
-          foursquare: {
+        ...(sdkEnv.CHECKIN_APP_TOKEN_ENDPOINT
+          && sdkEnv.CHECKIN_APP_AGENT_CLIENT_ID
+          && sdkEnv.CHECKIN_APP_SECRET
+          && sdkEnv.CHECKIN_APP_API ? {
+          checkin: {
             command: 'node',
-            args: ['/app/mcp-servers/foursquare/dist/index.js'],
-            env: { FOURSQUARE_TOKEN: sdkEnv.FOURSQUARE_TOKEN },
+            args: ['/app/mcp-servers/checkin/dist/index.js'],
+            env: {
+              CHECKIN_APP_TOKEN_ENDPOINT: sdkEnv.CHECKIN_APP_TOKEN_ENDPOINT,
+              CHECKIN_APP_AGENT_CLIENT_ID: sdkEnv.CHECKIN_APP_AGENT_CLIENT_ID,
+              CHECKIN_APP_SECRET: sdkEnv.CHECKIN_APP_SECRET,
+              CHECKIN_APP_API: sdkEnv.CHECKIN_APP_API,
+            },
           },
         } : {}),
         gmail_account1: {
