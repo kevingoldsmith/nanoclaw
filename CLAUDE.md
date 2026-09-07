@@ -89,6 +89,18 @@ systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
 
+## Personal Config Backup
+
+`skills_for_nanoclaw/` and the per-group `CLAUDE.md` files are deliberately gitignored — this fork is public and they carry personal names, work email domains, and account mappings. **Never `git add -f` them.** That left them with no backup and no history, which is how `trip-map` silently drifted from `drive_account2` to `drive_account1` unnoticed.
+
+`scripts/backup-personal.sh` mirrors them into the private repo `kevingoldsmith/nanoclaw-private` (cloned at `~/nanoclaw-private`, override with `NANOCLAW_PRIVATE_MIRROR`). One-way: the working tree stays the source of truth, and nothing in nanoclaw reads the mirror, so a failure here cannot affect the running system. Flags: `--dry-run`, `--no-push`.
+
+Three guards, all tested: it refuses to run without a mirror repo; it refuses to push unless `gh` **confirms the target is private** (an unknown answer also refuses); and it aborts before committing if any credential-shaped file (`.env*`, `credentials.json`, `tokens.json`, `gcp-oauth*`) reaches the mirror. Copying is an allowlist, not an ignore list, so a new secret in the tree cannot be swept in.
+
+**Scheduled Sundays 05:00** (an hour after session rotation) via `~/Library/LaunchAgents/com.nanoclaw.backup-personal.plist`, logging to `~/Library/Logs/nanoclaw/backup-personal.log`.
+
+**Why the plist runs node, not bash:** the repo is on an external volume and macOS TCC blocks launchd agents from removable volumes — a `/bin/bash` job cannot even `ls /Volumes/WIP/nanoclaw` (`Operation not permitted`). The node binary the main service runs under already holds that grant and child processes inherit it, so launchd starts node → `scripts/backup-personal-launchd.mjs` → bash. This avoids granting Full Disk Access to `/bin/bash`. **If node is upgraded, both this plist and `com.nanoclaw.plist` need the new path, and the new binary needs the same grant.**
+
 ## Logging
 
 Console always; on macOS also a rotated file at `~/Library/Logs/nanoclaw/nanoclaw.log` (`LOG_DIR` overrides the location, `LOG_DIR=""` disables the file — the Linux/systemd default, where journald captures stdout).
