@@ -61,9 +61,9 @@ RUN mkdir -p /home/node/.config/joplin-mcp && chown node:node /home/node/.config
 COPY bin/slack-mcp-server /usr/local/bin/slack-mcp-server
 RUN chmod +x /usr/local/bin/slack-mcp-server
 
-# Local MCP servers: Foursquare
-COPY mcp-servers/foursquare /app/mcp-servers/foursquare
-RUN cd /app/mcp-servers/foursquare && npm ci && npm run build
+# Local MCP servers: Check-in app
+COPY mcp-servers/checkin /app/mcp-servers/checkin
+RUN cd /app/mcp-servers/checkin && npm ci && npm run build
 
 # Local MCP servers: Gmail (local fork)
 COPY mcp-servers/gmail /app/mcp-servers/gmail
