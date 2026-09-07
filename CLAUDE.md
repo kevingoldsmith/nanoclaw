@@ -196,6 +196,8 @@ Statuses: `expiring` / `dead` (invalid_grant) / `missing` each notify **once** p
 
 **Gmail caveat:** the gmail account3 client does not report `refresh_token_expires_in`, so it gets no countdown — it is only alerted on when a refresh actually fails. Drive and calendar both report the 7-day window.
 
+**Anthropic `.env` fallback:** the same watcher also probes `CLAUDE_CODE_OAUTH_TOKEN` from `.env` with `GET /v1/models?limit=1` (authenticates without consuming inference). This is the fallback `container-runner` uses only when the Keychain read or refresh fails — see [Anthropic Auth-State Tracking](#anthropic-auth-state-tracking). Because it is hand-copied and the Keychain token rotates every few hours, it rots silently and the rot surfaces only during a Keychain failure, when it is needed most. Statuses are `dead` (401/403) and `missing` (not set); 5xx and network errors report `unknown` and never notify. In API-key mode the check does not apply and is skipped entirely. Fix with `./scripts/sync-oauth-fallback.sh`, which pulls the current Keychain token, **verifies it before writing**, backs up `.env`, and replaces the key atomically. The alert deliberately leads with "agents are unaffected right now" — it fires while everything is working.
+
 ## Anthropic Auth-State Tracking
 
 nanoclaw tracks the health of its Anthropic OAuth credentials with an in-memory state machine (`src/auth-state.ts`). On every container run, the result is inspected for the 401 `Failed to authenticate` marker:
@@ -205,4 +207,4 @@ nanoclaw tracks the health of its Anthropic OAuth credentials with an in-memory 
 - **Repeated 401s while broken:** the raw 401 text is rewritten to a friendly user-facing message; no extra Slack notifications fire.
 - **nanoclaw restart:** state resets to `healthy` — the next container spawn re-establishes ground truth.
 
-The `.env` `CLAUDE_CODE_OAUTH_TOKEN` is still used as a warm-start fallback when Keychain refresh fails. To recover from a broken state, `/login` on the Mac Mini and the next message should succeed; the recovery notification confirms the fix.
+The `.env` `CLAUDE_CODE_OAUTH_TOKEN` is still used as a warm-start fallback when Keychain refresh fails. That path now logs at **error** level when it is taken (`Keychain OAuth token unavailable — using the .env fallback`), because otherwise a Keychain failure is invisible and shows up only as a 401 inside the container. The fallback's own health is checked every 6h by the [Credential Expiry Watcher](#credential-expiry-watcher). To recover from a broken state, `/login` on the Mac Mini and the next message should succeed; the recovery notification confirms the fix.

@@ -627,6 +627,18 @@ export async function runContainerAgent(
     const keychainToken = await getOAuthToken();
     if (keychainToken) {
       secretsEnv.CLAUDE_CODE_OAUTH_TOKEN = keychainToken;
+    } else {
+      // Falling through to the hand-copied .env token, which rotates out of
+      // date on its own. Say so loudly: otherwise the only symptom is a 401
+      // inside the container, with nothing pointing at the Keychain as the
+      // real cause. credential-expiry-watcher probes this token every 6h so
+      // its health should already be known.
+      logger.error(
+        { hasEnvFallback: Boolean(secretsEnv.CLAUDE_CODE_OAUTH_TOKEN) },
+        'Keychain OAuth token unavailable — using the .env fallback. ' +
+          'If agents now 401, run ./scripts/sync-oauth-fallback.sh ' +
+          '(or `claude /login` if the Keychain itself is empty).',
+      );
     }
   }
 

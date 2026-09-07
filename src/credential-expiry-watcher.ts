@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
 const HOME = os.homedir();
@@ -103,6 +104,11 @@ export interface CheckResult {
   /** Remaining refresh-token life. Absent when the server reports none. */
   secondsLeft?: number;
   reason?: string;
+  /**
+   * Which family of credential this is. The two differ in what a failure
+   * means and how it is repaired, so the alert wording is not shared.
+   */
+  kind?: 'google-refresh' | 'anthropic-fallback';
 }
 
 export interface ClientCreds {
@@ -144,7 +150,7 @@ export function readRefreshToken(
 
 export type FetchLike = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string },
+  init: { method: string; headers: Record<string, string>; body?: string },
 ) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
 
 /**
@@ -223,11 +229,112 @@ export async function checkCredential(
   };
 }
 
+/**
+ * nanoclaw's Anthropic auth has two sources. `container-runner` prefers the
+ * macOS Keychain token (which Claude Code rotates and this process refreshes),
+ * and falls back to `CLAUDE_CODE_OAUTH_TOKEN` from `.env` only when the
+ * Keychain read or refresh fails.
+ *
+ * That fallback is hand-copied, so it cannot track a token that rotates every
+ * few hours — it silently rots. Nothing surfaces the rot, because the healthy
+ * path never touches it. The failure therefore only ever appears at the worst
+ * possible moment: a Keychain hiccup falls through to a revoked token, every
+ * container 401s, and scheduled tasks stop.
+ *
+ * This check exercises the fallback on the same cadence as the account3
+ * credentials so it is known-good *before* it is needed. `GET /v1/models` is
+ * used deliberately: it authenticates the token without consuming inference.
+ */
+const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models?limit=1';
+
+export const ANTHROPIC_FALLBACK_LABEL = 'Anthropic `.env` fallback';
+
+export const SYNC_FALLBACK_COMMAND = '`./scripts/sync-oauth-fallback.sh`';
+
+export async function checkAnthropicFallback(
+  env: Record<string, string>,
+  doFetch: FetchLike,
+): Promise<CheckResult | null> {
+  const base = {
+    label: ANTHROPIC_FALLBACK_LABEL,
+    service: 'anthropic',
+    kind: 'anthropic-fallback' as const,
+  };
+
+  // API-key mode never consults the OAuth fallback, so it cannot be at fault.
+  if (env.ANTHROPIC_API_KEY) return null;
+
+  const token = env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (!token) {
+    return { ...base, status: 'missing', reason: 'not set in .env' };
+  }
+
+  let res: Awaited<ReturnType<FetchLike>>;
+  let text: string;
+  try {
+    res = await doFetch(ANTHROPIC_MODELS_URL, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'anthropic-version': '2023-06-01',
+      },
+    });
+    text = await res.text();
+  } catch (err) {
+    return { ...base, status: 'unknown', reason: (err as Error).message };
+  }
+
+  if (res.ok) return { ...base, status: 'ok' };
+
+  // 401/403 is definitive: revoked, expired, or the token was never valid.
+  // Everything else (5xx, rate limits, gateway errors) says nothing about
+  // the credential and must not raise an alarm.
+  if (res.status !== 401 && res.status !== 403) {
+    return { ...base, status: 'unknown', reason: `HTTP ${res.status}` };
+  }
+
+  let reason = `HTTP ${res.status}`;
+  try {
+    const parsed = JSON.parse(text) as { error?: { message?: string } };
+    if (parsed.error?.message) reason = parsed.error.message;
+  } catch {
+    // Non-JSON body — the status code is reason enough.
+  }
+  return { ...base, status: 'dead', reason };
+}
+
+function formatAnthropicFallbackAlert(result: CheckResult): string {
+  // Lead with the fact that nothing is broken yet. This alert fires while
+  // agents are running fine, and reads as a false alarm otherwise.
+  const preamble =
+    'Agents are unaffected right now — nanoclaw prefers the Keychain token. ' +
+    'But if a Keychain read or refresh ever fails, there is nothing to fall ' +
+    'back to: containers would 401 and scheduled tasks would stop.';
+
+  switch (result.status) {
+    case 'dead':
+      return (
+        `⚠ ${ANTHROPIC_FALLBACK_LABEL} token is dead (${result.reason}). ` +
+        `${preamble} Run ${SYNC_FALLBACK_COMMAND}`
+      );
+    case 'missing':
+      return (
+        `⚠ ${ANTHROPIC_FALLBACK_LABEL} token is ${result.reason}. ` +
+        `${preamble} Run ${SYNC_FALLBACK_COMMAND}`
+      );
+    default:
+      return '';
+  }
+}
+
 function days(seconds: number): string {
   return `${(seconds / 86400).toFixed(1)}d`;
 }
 
 export function formatAlert(result: CheckResult): string {
+  if (result.kind === 'anthropic-fallback') {
+    return formatAnthropicFallbackAlert(result);
+  }
   const rotate = `\`./scripts/rotate-account3.sh ${result.service}\``;
   switch (result.status) {
     case 'expiring':
@@ -249,6 +356,12 @@ export function formatAlert(result: CheckResult): string {
 }
 
 export function formatRecovery(result: CheckResult): string {
+  if (result.kind === 'anthropic-fallback') {
+    return (
+      '✓ Anthropic `.env` fallback token is valid again — the Keychain ' +
+      'failover path is armed.'
+    );
+  }
   const left =
     typeof result.secondsLeft === 'number'
       ? ` (${days(result.secondsLeft)} left)`
@@ -285,6 +398,8 @@ export interface RunCheckArgs {
   warnThresholdSeconds: number;
   notify: NotifyFn;
   doFetch?: FetchLike;
+  /** Injectable for tests; reads the real `.env` otherwise. */
+  readEnv?: () => Record<string, string>;
 }
 
 export async function runExpiryCheckOnce(
@@ -295,19 +410,31 @@ export async function runExpiryCheckOnce(
     warnThresholdSeconds,
     notify,
     doFetch = globalThis.fetch as unknown as FetchLike,
+    readEnv = () =>
+      readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']),
   } = args;
 
+  const checks: Array<() => Promise<CheckResult | null>> = [
+    ...credentials.map(
+      (spec) => () => checkCredential(spec, warnThresholdSeconds, doFetch),
+    ),
+    () => checkAnthropicFallback(readEnv(), doFetch),
+  ];
+
   const results: CheckResult[] = [];
-  for (const spec of credentials) {
-    const result = await checkCredential(spec, warnThresholdSeconds, doFetch);
+  for (const check of checks) {
+    const result = await check();
+    // `null` means the check does not apply (e.g. API-key mode). Skip it
+    // without disturbing any armed state.
+    if (!result) continue;
     results.push(result);
 
-    const previous = lastNotified.get(spec.label);
+    const previous = lastNotified.get(result.label);
 
     // Transient failures tell us nothing — leave the previous state armed.
     if (result.status === 'unknown') {
       logger.warn(
-        { label: spec.label, reason: result.reason },
+        { label: result.label, reason: result.reason },
         'credential-expiry-watcher: check inconclusive',
       );
       continue;
@@ -317,7 +444,7 @@ export async function runExpiryCheckOnce(
       if (previous && previous !== 'ok') {
         if ((await notify(formatRecovery(result))) === false) continue;
       }
-      lastNotified.set(spec.label, 'ok');
+      lastNotified.set(result.label, 'ok');
       continue;
     }
 
@@ -325,7 +452,7 @@ export async function runExpiryCheckOnce(
     if (previous !== result.status) {
       if ((await notify(formatAlert(result))) === false) continue;
     }
-    lastNotified.set(spec.label, result.status);
+    lastNotified.set(result.label, result.status);
   }
 
   logger.info(
