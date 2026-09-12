@@ -28,6 +28,7 @@ import {
 } from './credential-expiry-watcher.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { setNotify as setAuthStateNotify } from './auth-state.js';
+import { setSkillOverwriteNotify } from './skill-sync.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -860,6 +861,7 @@ async function main(): Promise<void> {
       await notifyFirstGroup('credential-drop-watcher')(text);
     },
   });
+  setSkillOverwriteNotify(notifyFirstGroup('skill-sync'));
   startCredentialExpiryWatcher({
     intervalMs: CREDENTIAL_EXPIRY_INTERVAL_MS,
     warnThresholdSeconds: CREDENTIAL_EXPIRY_WARN_SECONDS,

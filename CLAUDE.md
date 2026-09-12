@@ -89,6 +89,18 @@ systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
 
+## Container-Side Skill Edits
+
+`skills_for_nanoclaw/` is copied into each group's session skills dir on **every spawn** (`src/skill-sync.ts`, called from `container-runner.ts`). The copy is one-way and unconditional — the repo is the source of truth and nothing ever copies back.
+
+The mount is read-write, so the agent *can* edit its own skills and the edit works for that run — then the next spawn destroys it. This is write-only memory, and it bit us: the agent rewrote `morning-briefing` to call `mcp__checkin__get_last_checkin` instead of the removed foursquare tool, rediscovered the same fix four times in one run, and lost it each time. Recovering it meant digging through the agent's JSONL transcript.
+
+`syncSkills()` still overwrites, but no longer silently. Before copying it saves the container's version to `data/skill-edits/<group>/<timestamp>/` and sends a Slack warning naming the files and that directory. **Porting the change into `skills_for_nanoclaw/` is the only durable fix.**
+
+Divergence requires **both** differing content **and** a destination newer than the source. Both conditions are load-bearing: `fs.cpSync` does not preserve mtimes, so after every ordinary sync the destination is already newer — mtime alone would warn on every spawn. A host-side edit (repo newer) overwrites silently, as intended.
+
+A file the agent *adds* to a skill is not reported: the sync never prunes, so nothing is lost.
+
 ## Personal Config Backup
 
 `skills_for_nanoclaw/` and the per-group `CLAUDE.md` files are deliberately gitignored — this fork is public and they carry personal names, work email domains, and account mappings. **Never `git add -f` them.** That left them with no backup and no history, which is how `trip-map` silently drifted from `drive_account2` to `drive_account1` unnoticed.

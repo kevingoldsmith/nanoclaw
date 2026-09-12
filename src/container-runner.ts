@@ -21,6 +21,11 @@ import {
   TIMEZONE,
 } from './config.js';
 import { readEnvFile } from './env.js';
+import {
+  formatSkillOverwriteWarning,
+  notifySkillOverwrite,
+  syncSkills,
+} from './skill-sync.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -376,16 +381,30 @@ function buildVolumeMounts(
     }
   }
 
-  // Also sync user's personal skills from skills_for_nanoclaw/
-  const customSkillsSrc = path.join(process.cwd(), 'skills_for_nanoclaw');
-  if (fs.existsSync(customSkillsSrc)) {
-    for (const skillDir of fs.readdirSync(customSkillsSrc)) {
-      const srcDir = path.join(customSkillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
-    }
-  }
+  // Also sync user's personal skills from skills_for_nanoclaw/.
+  //
+  // The skills mount is read-write, so the agent can edit its own skills — but
+  // this copy is unconditional and nothing ever copies back, so any such edit
+  // dies at the next spawn. syncSkills keeps the repo authoritative while
+  // making that loss visible: the container's version is saved aside and
+  // reported instead of silently clobbered.
+  syncSkills({
+    srcRoot: path.join(process.cwd(), 'skills_for_nanoclaw'),
+    dstRoot: skillsDst,
+    quarantineRoot: path.join(DATA_DIR, 'skill-edits', group.folder),
+    onOverwrite: (files, quarantineDir) => {
+      const text = formatSkillOverwriteWarning(files, quarantineDir);
+      logger.warn(
+        {
+          group: group.folder,
+          files: files.map((f) => `${f.skill}/${f.relPath}`),
+          quarantineDir,
+        },
+        'Overwrote container-side skill edits',
+      );
+      notifySkillOverwrite(text);
+    },
+  });
 
   mounts.push({
     hostPath: groupSessionsDir,
