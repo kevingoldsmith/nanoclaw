@@ -85,6 +85,29 @@ if (LOG_DIR) {
   }
 }
 
+/**
+ * Credential shapes scrubbed from every line before it is written. Callers
+ * log errors under arbitrary keys and the logger JSON-serialises them whole,
+ * so an axios error from the Slack Web API dumped its request config —
+ * `Authorization: Bearer xoxb-…` included — into nanoclaw.log on every
+ * failed send during an outage. Redacting here, at the single choke point,
+ * covers every call site present and future instead of each one remembering.
+ */
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]'],
+  [/\b(xox[a-z]|xapp)-[A-Za-z0-9-]+/g, '$1-[REDACTED]'],
+  [/\bsk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-[REDACTED]'],
+  [/\bya29\.[A-Za-z0-9._-]+/g, 'ya29.[REDACTED]'],
+];
+
+export function redactSecrets(text: string): string {
+  let out = text;
+  for (const [pattern, replacement] of SECRET_PATTERNS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
 function formatErr(err: unknown): string {
   if (err instanceof Error) {
     return `{\n      "type": "${err.constructor.name}",\n      "message": "${err.message}",\n      "stack":\n          ${err.stack}\n    }`;
@@ -126,6 +149,7 @@ function log(
   } else {
     consoleLine = `[${time}] ${tag} (${process.pid}): ${MSG_COLOR}${msg ?? ''}${RESET}${formatData(dataOrMsg)}\n`;
   }
+  consoleLine = redactSecrets(consoleLine);
 
   consoleStream.write(consoleLine);
   if (fileStream) {

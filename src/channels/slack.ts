@@ -134,6 +134,49 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
     }
   }
 
+  // Liveness probe. The downtime watchdog is armed by socket events, so a
+  // socket that dies without emitting any leaves it unarmed forever. Observed
+  // 2026-10-29: a two-day internet outage, last event `connected`, then
+  // nothing — no 'disconnected', 'connecting' or 'reconnecting' — and zero
+  // TCP connections once the network returned. Inbound Slack stayed dead.
+  //
+  // So poll the websocket's real readyState as well. When it is not OPEN the
+  // probe only *arms* the downtime watchdog; it never clears it. That keeps
+  // one clock and one rule — only a real 'connected' ends downtime — and gives
+  // the library's own reconnect the same 300s to recover before we exit.
+  const LIVENESS_PROBE_INTERVAL_MS = 60_000;
+  let livenessProbe: NodeJS.Timeout | null = null;
+
+  function isSocketOpen(): boolean {
+    const ws = (
+      socketClient as unknown as {
+        websocket?: { isActive(): boolean };
+      } | null
+    )?.websocket;
+    return ws?.isActive() ?? false;
+  }
+
+  function startLivenessProbe(): void {
+    if (livenessProbe) return;
+    livenessProbe = setInterval(() => {
+      if (shuttingDown || isSocketOpen()) return;
+      if (!downtimeTimer) {
+        logger.warn(
+          { timeoutMs: SOCKET_DOWN_TIMEOUT_MS },
+          'Slack liveness probe: websocket not open — arming downtime watchdog',
+        );
+      }
+      armDowntimeWatchdog();
+    }, LIVENESS_PROBE_INTERVAL_MS);
+  }
+
+  function stopLivenessProbe(): void {
+    if (livenessProbe) {
+      clearInterval(livenessProbe);
+      livenessProbe = null;
+    }
+  }
+
   // The App + SocketModeClient pair is recreated on reconnect
   let app = createApp();
   let socketClient: SocketModeClient | null = null;
@@ -558,6 +601,16 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
         attachSocketListeners(socketClient);
       }
 
+      // Startup counts as downtime until a real 'connected'. Started during
+      // an outage, app.start() sits inside apps.connections.open retries
+      // (100 tries, x1.3 backoff, no cap) *before* any 'connecting' event,
+      // so nothing else would arm the watchdog — and after a two-day outage
+      // the next retry can be ~17h away. Exiting instead means launchd
+      // restarts every ~5 min while offline and reconnects within one cycle
+      // of the network returning.
+      armDowntimeWatchdog();
+      startLivenessProbe();
+
       await app.start();
       connected = true;
       logger.info('Slack channel connected');
@@ -596,6 +649,7 @@ registerChannel('slack', (opts: ChannelOpts): Channel | null => {
     async disconnect(): Promise<void> {
       shuttingDown = true;
       clearDowntimeWatchdog();
+      stopLivenessProbe();
       await app.stop();
       connected = false;
       logger.info('Slack channel disconnected');

@@ -626,9 +626,12 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   // Read secrets and refresh OAuth token before spawning the container.
+  // CLAUDE_CODE_OAUTH_TOKEN is deliberately NOT read from .env: the Keychain
+  // token rotates every few hours, so a hand-copied copy was always stale by
+  // the time a Keychain failure made it matter. It only turned that failure
+  // into a misleading 401.
   const secretsEnv = readEnvFile([
     'ANTHROPIC_API_KEY',
-    'CLAUDE_CODE_OAUTH_TOKEN',
     'TODOIST_API_KEY',
     'CHECKIN_APP_TOKEN_ENDPOINT',
     'CHECKIN_APP_AGENT_CLIENT_ID',
@@ -641,22 +644,20 @@ export async function runContainerAgent(
     'OPEN_BRAIN_URL',
     'OPENAI_API_KEY',
   ]);
-  // Prefer fresh OAuth token from Keychain over potentially stale .env value
+  // OAuth mode: the Keychain is the only token source.
   if (!secretsEnv.ANTHROPIC_API_KEY) {
     const keychainToken = await getOAuthToken();
     if (keychainToken) {
       secretsEnv.CLAUDE_CODE_OAUTH_TOKEN = keychainToken;
     } else {
-      // Falling through to the hand-copied .env token, which rotates out of
-      // date on its own. Say so loudly: otherwise the only symptom is a 401
-      // inside the container, with nothing pointing at the Keychain as the
-      // real cause. credential-expiry-watcher probes this token every 6h so
-      // its health should already be known.
+      // Say so loudly: otherwise the only symptom is an auth failure inside
+      // the container, with nothing pointing at the Keychain as the cause.
+      // A refresh can also fail transiently (network), so the next spawn
+      // retries rather than this marking auth broken.
       logger.error(
-        { hasEnvFallback: Boolean(secretsEnv.CLAUDE_CODE_OAUTH_TOKEN) },
-        'Keychain OAuth token unavailable — using the .env fallback. ' +
-          'If agents now 401, run ./scripts/sync-oauth-fallback.sh ' +
-          '(or `claude /login` if the Keychain itself is empty).',
+        'Keychain OAuth token unavailable — container will run without ' +
+          'Anthropic credentials. If this persists, run `claude /login` ' +
+          'on the Mac Mini.',
       );
     }
   }

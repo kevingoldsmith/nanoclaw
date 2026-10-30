@@ -14,8 +14,6 @@ import {
   runExpiryCheckOnce,
   type CredentialSpec,
   type FetchLike,
-  checkAnthropicFallback,
-  ANTHROPIC_FALLBACK_LABEL,
 } from './credential-expiry-watcher.js';
 
 const DAY = 86400;
@@ -70,13 +68,6 @@ function fetchReturning(
   };
   return { fn, calls };
 }
-
-/**
- * API-key mode, which switches the Anthropic fallback probe off. These tests
- * are about the account3 credentials; without this they would read the real
- * `.env` and change behaviour from machine to machine.
- */
-const NO_ANTHROPIC = () => ({ ANTHROPIC_API_KEY: 'sk-ant-api-test' });
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cred-expiry-'));
@@ -239,7 +230,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     const credentials = [makeSpec()];
     for (let i = 0; i < 3; i++) {
       await runExpiryCheckOnce({
-        readEnv: NO_ANTHROPIC,
         credentials,
         warnThresholdSeconds: WARN,
         notify,
@@ -254,14 +244,12 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     const notify = vi.fn();
     const credentials = [makeSpec()];
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
       doFetch: expiringFetch,
     });
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
@@ -275,21 +263,18 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     const notify = vi.fn();
     const credentials = [makeSpec()];
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
       doFetch: expiringFetch,
     });
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
       doFetch: healthyFetch,
     });
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
@@ -302,7 +287,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
   it('stays silent on a healthy credential from the start', async () => {
     const notify = vi.fn();
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials: [makeSpec()],
       warnThresholdSeconds: WARN,
       notify,
@@ -315,7 +299,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     const notify = vi.fn();
     const credentials = [makeSpec()];
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
@@ -323,7 +306,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     });
     // A network blip must not look like a recovery...
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
@@ -331,7 +313,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     });
     // ...nor re-alarm when the credential is still expiring afterwards.
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
@@ -344,7 +325,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     const credentials = [makeSpec()];
     const undelivered = vi.fn().mockResolvedValue(false);
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify: undelivered,
@@ -355,7 +335,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     // Nothing was armed, so the next tick must warn again.
     const delivered = vi.fn().mockResolvedValue(true);
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify: delivered,
@@ -365,7 +344,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
 
     // And now that it landed, it goes quiet.
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify: delivered,
@@ -378,7 +356,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     const credentials = [makeSpec()];
     const notify = vi.fn().mockResolvedValue(true);
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
@@ -386,7 +363,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     });
     const dropped = vi.fn().mockResolvedValue(false);
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify: dropped,
@@ -394,7 +370,6 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     });
     expect(dropped).toHaveBeenCalledTimes(1);
     await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials,
       warnThresholdSeconds: WARN,
       notify,
@@ -409,206 +384,11 @@ describe('runExpiryCheckOnce notify-once semantics', () => {
     const broken = makeSpec({ label: 'a', tokensPath: '/nonexistent/t.json' });
     const fine = makeSpec({ label: 'b' });
     const results = await runExpiryCheckOnce({
-      readEnv: NO_ANTHROPIC,
       credentials: [broken, fine],
       warnThresholdSeconds: WARN,
       notify,
       doFetch: healthyFetch,
     });
     expect(results.map((r) => r.status)).toEqual(['missing', 'ok']);
-  });
-});
-
-describe('checkAnthropicFallback', () => {
-  const GOOD = { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat-good' };
-
-  it('reports ok when the token authenticates', async () => {
-    const { fn } = fetchReturning(200, { data: [] });
-    const r = await checkAnthropicFallback(GOOD, fn);
-    expect(r?.status).toBe('ok');
-  });
-
-  it('authenticates without consuming inference', async () => {
-    const { fn, calls } = fetchReturning(200, { data: [] });
-    await checkAnthropicFallback(GOOD, fn);
-    expect(calls[0].method).toBe('GET');
-    expect(calls[0].url).toContain('/v1/models');
-    expect(calls[0].body).toBeUndefined();
-    expect(calls[0].headers.Authorization).toBe('Bearer sk-ant-oat-good');
-  });
-
-  it('reports dead on a revoked token, quoting the API message', async () => {
-    const { fn } = fetchReturning(401, {
-      error: { message: 'OAuth access token has been revoked.' },
-    });
-    const r = await checkAnthropicFallback(GOOD, fn);
-    expect(r?.status).toBe('dead');
-    expect(r?.reason).toBe('OAuth access token has been revoked.');
-  });
-
-  it('reports dead on 403', async () => {
-    const { fn } = fetchReturning(403, {});
-    expect((await checkAnthropicFallback(GOOD, fn))?.status).toBe('dead');
-  });
-
-  it('reports missing when no fallback token is configured', async () => {
-    const { fn } = fetchReturning(200, {});
-    const r = await checkAnthropicFallback({}, fn);
-    expect(r?.status).toBe('missing');
-  });
-
-  it('does not apply in API-key mode', async () => {
-    const { fn, calls } = fetchReturning(200, {});
-    const r = await checkAnthropicFallback(
-      { ...GOOD, ANTHROPIC_API_KEY: 'sk-ant-api-x' },
-      fn,
-    );
-    expect(r).toBeNull();
-    expect(calls).toHaveLength(0);
-  });
-
-  it('reports unknown on a server error rather than crying wolf', async () => {
-    const { fn } = fetchReturning(503, {});
-    const r = await checkAnthropicFallback(GOOD, fn);
-    expect(r?.status).toBe('unknown');
-  });
-
-  it('reports unknown when the network throws', async () => {
-    const fn: FetchLike = async () => {
-      throw new Error('ECONNREFUSED');
-    };
-    const r = await checkAnthropicFallback(GOOD, fn);
-    expect(r?.status).toBe('unknown');
-    expect(r?.reason).toBe('ECONNREFUSED');
-  });
-
-  it('survives a 401 body that is not JSON', async () => {
-    const fn: FetchLike = async () => ({
-      ok: false,
-      status: 401,
-      text: async () => '<html>gateway</html>',
-    });
-    const r = await checkAnthropicFallback(GOOD, fn);
-    expect(r?.status).toBe('dead');
-    expect(r?.reason).toBe('HTTP 401');
-  });
-});
-
-describe('anthropic fallback alert wording', () => {
-  it('leads with the fact that agents are still fine', () => {
-    const text = formatAlert({
-      label: ANTHROPIC_FALLBACK_LABEL,
-      service: 'anthropic',
-      kind: 'anthropic-fallback',
-      status: 'dead',
-      reason: 'OAuth access token has been revoked.',
-    });
-    expect(text).toMatch(/unaffected right now/i);
-    expect(text).toContain('sync-oauth-fallback.sh');
-    // Must not borrow the Google wording: nothing is down and there is no
-    // refresh token involved.
-    expect(text).not.toMatch(/refresh token/i);
-    expect(text).not.toMatch(/integration is down/i);
-    expect(text).not.toContain('rotate-account3');
-  });
-
-  it('does not claim a rotation window on recovery', () => {
-    const text = formatRecovery({
-      label: ANTHROPIC_FALLBACK_LABEL,
-      service: 'anthropic',
-      kind: 'anthropic-fallback',
-      status: 'ok',
-    });
-    expect(text).toMatch(/valid again/i);
-    expect(text).not.toMatch(/renewed/);
-  });
-});
-
-describe('runExpiryCheckOnce with the anthropic fallback', () => {
-  const healthyGoogle = {
-    access_token: 'x',
-    refresh_token_expires_in: 7 * DAY,
-  };
-
-  it('checks the fallback alongside the google credentials', async () => {
-    const notify = vi.fn();
-    const results = await runExpiryCheckOnce({
-      credentials: [],
-      warnThresholdSeconds: 2 * DAY,
-      notify,
-      doFetch: fetchReturning(401, {
-        error: { message: 'OAuth access token has been revoked.' },
-      }).fn,
-      readEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'stale' }),
-    });
-    expect(results).toHaveLength(1);
-    expect(results[0].status).toBe('dead');
-    expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify.mock.calls[0][0]).toContain('sync-oauth-fallback.sh');
-  });
-
-  it('notifies once while the fallback stays dead', async () => {
-    const notify = vi.fn();
-    const args = {
-      credentials: [],
-      warnThresholdSeconds: 2 * DAY,
-      notify,
-      doFetch: fetchReturning(401, {}).fn,
-      readEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'stale' }),
-    };
-    await runExpiryCheckOnce(args);
-    await runExpiryCheckOnce(args);
-    expect(notify).toHaveBeenCalledTimes(1);
-  });
-
-  it('sends one recovery message after the token is synced', async () => {
-    const notify = vi.fn();
-    const base = {
-      credentials: [],
-      warnThresholdSeconds: 2 * DAY,
-      notify,
-      readEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'tok' }),
-    };
-    await runExpiryCheckOnce({ ...base, doFetch: fetchReturning(401, {}).fn });
-    await runExpiryCheckOnce({
-      ...base,
-      doFetch: fetchReturning(200, { data: [] }).fn,
-    });
-    await runExpiryCheckOnce({
-      ...base,
-      doFetch: fetchReturning(200, { data: [] }).fn,
-    });
-    expect(notify).toHaveBeenCalledTimes(2);
-    expect(notify.mock.calls[1][0]).toMatch(/valid again/i);
-  });
-
-  it('stays silent in API-key mode instead of reporting a missing fallback', async () => {
-    const notify = vi.fn();
-    const results = await runExpiryCheckOnce({
-      credentials: [],
-      warnThresholdSeconds: 2 * DAY,
-      notify,
-      doFetch: fetchReturning(200, healthyGoogle).fn,
-      readEnv: () => ({ ANTHROPIC_API_KEY: 'sk-ant-api-x' }),
-    });
-    expect(results).toHaveLength(0);
-    expect(notify).not.toHaveBeenCalled();
-  });
-
-  it('does not let a dead fallback suppress the google checks', async () => {
-    const notify = vi.fn();
-    const results = await runExpiryCheckOnce({
-      credentials: [makeSpec()],
-      warnThresholdSeconds: 2 * DAY,
-      // Both the google refresh and the fallback probe see this 401.
-      doFetch: fetchReturning(401, { error: 'invalid_grant' }).fn,
-      notify,
-      readEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'stale' }),
-    });
-    expect(results.map((r) => r.label)).toEqual([
-      'account3 drive',
-      ANTHROPIC_FALLBACK_LABEL,
-    ]);
-    expect(notify).toHaveBeenCalledTimes(2);
   });
 });

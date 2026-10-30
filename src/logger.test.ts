@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isTestEnv, resolveLogDir } from './logger.js';
+import { isTestEnv, redactSecrets, resolveLogDir } from './logger.js';
 
 const HOME = '/Users/someone';
 
@@ -62,5 +62,50 @@ describe('resolveLogDir', () => {
     // Reads the real process.env: proves the suite you are running right now
     // is not appending to ~/Library/Logs/nanoclaw/nanoclaw.log.
     expect(resolveLogDir()).toBe('');
+  });
+});
+
+describe('redactSecrets', () => {
+  it('strips the bearer token axios dumps into Slack Web API errors', () => {
+    // Shape of the real 2026-10-29 leak: an axios error's request config,
+    // JSON-serialised under an `error` key, Authorization header included.
+    const line = JSON.stringify({
+      config: {
+        headers: { Authorization: 'Bearer xoxb-0000-1111-FAKEtokenVALUE' },
+      },
+    });
+    const out = redactSecrets(line);
+    expect(out).not.toContain('FAKEtokenVALUE');
+    expect(out).toContain('Bearer [REDACTED]');
+  });
+
+  it('strips bare Slack tokens of every prefix', () => {
+    for (const tok of [
+      'xoxb-1-2-abc',
+      'xoxp-1-2-abc',
+      'xoxc-1-2-abc',
+      'xoxd-abc',
+      'xapp-1-A0-abc',
+    ]) {
+      const out = redactSecrets(`token=${tok} trailing`);
+      expect(out).not.toContain('abc');
+      expect(out).toContain('trailing');
+    }
+  });
+
+  it('strips Anthropic keys and OAuth tokens', () => {
+    const out = redactSecrets('key sk-ant-oat01-AbC_d-9 and sk-ant-api03-XyZ');
+    expect(out).toBe('key sk-ant-[REDACTED] and sk-ant-[REDACTED]');
+  });
+
+  it('strips Google OAuth access tokens', () => {
+    expect(redactSecrets('tok ya29.a0AfH6SM-x_y.z end')).toBe(
+      'tok ya29.[REDACTED] end',
+    );
+  });
+
+  it('leaves ordinary log text alone', () => {
+    const line = 'Slack socket connected group: "slack-main" xox ya29 sk-ant';
+    expect(redactSecrets(line)).toBe(line);
   });
 });

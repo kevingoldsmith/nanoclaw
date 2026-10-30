@@ -28,6 +28,9 @@ const mockUsersInfo = vi.fn().mockResolvedValue({
 const mockMessageHandler = vi.fn();
 const mockEventHandler = vi.fn();
 const mockReceiverClientOn = vi.fn();
+// The SocketModeClient's underlying websocket, as the liveness probe sees it.
+// `undefined` models a client between sockets (closed, not yet reopened).
+let mockWebsocket: { isActive: () => boolean } | undefined;
 
 vi.mock('@slack/bolt', () => ({
   App: class MockApp {
@@ -41,7 +44,14 @@ vi.mock('@slack/bolt', () => ({
     };
     message = mockMessageHandler;
     event = mockEventHandler;
-    receiver = { client: { on: mockReceiverClientOn } };
+    receiver = {
+      client: {
+        on: mockReceiverClientOn,
+        get websocket() {
+          return mockWebsocket;
+        },
+      },
+    };
   },
 }));
 
@@ -78,6 +88,9 @@ function makeChannel() {
 describe('Slack channel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: a healthy open socket, so the liveness probe stays out of
+    // tests that are not about it.
+    mockWebsocket = { isActive: () => true };
     // Default: tokens set
     process.env.SLACK_APP_TOKEN = 'xapp-test-token';
     process.env.SLACK_BOT_TOKEN = 'xoxb-test-token';
@@ -329,6 +342,112 @@ describe('Slack channel', () => {
       await channel.disconnect();
 
       await vi.advanceTimersByTimeAsync(300_000);
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('liveness probe', () => {
+    // 2026-10-29: a two-day internet outage killed the socket without a
+    // single 'disconnected'/'connecting'/'reconnecting' event, so the
+    // event-driven downtime watchdog never armed. The process held zero TCP
+    // connections and inbound Slack stayed dead after the network returned.
+    // The probe polls the websocket's real state instead of trusting events.
+    let exitSpy: ReturnType<typeof vi.spyOn>;
+    let socketOpen: boolean;
+
+    function fire(event: string): void {
+      mockReceiverClientOn.mock.calls
+        .filter((c) => c[0] === event)
+        .forEach((c) => (c[1] as () => void)());
+    }
+
+    async function connectedChannel() {
+      const channel = makeChannel()!;
+      await channel.connect();
+      fire('connecting');
+      fire('connected');
+      return channel;
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      exitSpy = vi
+        .spyOn(process, 'exit')
+        .mockImplementation((() => undefined) as never);
+      socketOpen = true;
+      mockWebsocket = { isActive: () => socketOpen };
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      exitSpy.mockRestore();
+      mockWebsocket = undefined;
+    });
+
+    it('exits when the socket dies without emitting any event', async () => {
+      await connectedChannel();
+
+      socketOpen = false;
+      // First probe (60s) notices; the 300s downtime window starts there.
+      await vi.advanceTimersByTimeAsync(60_000 + 299_000);
+      expect(exitSpy).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('treats a missing websocket as down', async () => {
+      await connectedChannel();
+
+      mockWebsocket = undefined;
+      await vi.advanceTimersByTimeAsync(60_000 + 301_000);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('stays quiet while the socket stays open', async () => {
+      await connectedChannel();
+
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not exit when the socket recovers within the window', async () => {
+      await connectedChannel();
+
+      socketOpen = false;
+      await vi.advanceTimersByTimeAsync(60_000);
+      // The library's own reconnect gets there in time.
+      socketOpen = true;
+      fire('connecting');
+      fire('connected');
+
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it('exits when the initial connect never completes', async () => {
+      // A restart during an outage: Bolt's start() sits inside the Socket
+      // Mode client's apps.connections.open retries (100 tries, x1.3 backoff,
+      // no cap) and never emits 'connecting'. Startup must count as downtime
+      // or the process idles there for hours after the network returns.
+      mockStart.mockReturnValueOnce(new Promise(() => {}));
+      mockWebsocket = undefined;
+      const channel = makeChannel()!;
+      void channel.connect();
+
+      await vi.advanceTimersByTimeAsync(299_000);
+      expect(exitSpy).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('stops probing after disconnect', async () => {
+      const channel = await connectedChannel();
+      await channel.disconnect();
+
+      socketOpen = false;
+      await vi.advanceTimersByTimeAsync(3_600_000);
       expect(exitSpy).not.toHaveBeenCalled();
     });
   });
