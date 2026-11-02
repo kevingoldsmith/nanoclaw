@@ -181,6 +181,8 @@ phrase answers with the timestamp.
 
 **Requirements:** Joplin desktop must be running on the host with the Web Clipper / API enabled.
 
+**Gotcha:** the package hardcodes its log directory to `<package>/logs` and creates it at startup. That path is root-owned in the image and the container runs as the host uid, so without the `logs → /tmp` symlink in `container/Dockerfile` the server exits with `EACCES` before registering any tools. This went unnoticed from March to November 2026; the agent only ever reported that Joplin tools "aren't available".
+
 **Usage examples:**
 - "Search my Joplin notes for..."
 - "Create a note in Joplin"
@@ -304,9 +306,15 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # Restart service (macOS)
 ## Troubleshooting
 
 **MCP server not loading:**
-- Check container logs: `tail -f ~/Library/Logs/nanoclaw/nanoclaw.log`
+- A server that fails at session init is logged at error level (`MCP server failed to start`) and posts a one-time Slack warning; see `src/mcp-health.ts`. Each container log also has an `MCP servers: name=status, …` line: `grep -h "MCP servers:" groups/*/logs/container-*.log | tail`
+- The SDK only reports the status, not why. Run the server by hand in the image, as the host uid, and send it an `initialize` request to see its stderr:
+  ```bash
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
+    | docker run --rm -i --user "$(id -u):$(id -g)" -e YOUR_ENV=... --entrypoint sh nanoclaw-agent:latest -c 'timeout 15 your-mcp-command'
+  ```
 - Verify credentials are mounted: `docker inspect [container-name]`
-- Test MCP manually: `docker exec [container] npx your-mcp-package`
+
+**Fix applied but the agent still can't see the tools:** a running container keeps the image it started with, and stays alive up to `IDLE_TIMEOUT` (30 min) after its last reply, with new messages piped into it. After `./container/build.sh`, restart the service (startup stops orphaned containers) or wait out the idle timeout. Check with `docker ps` that no container predates the image.
 
 **Permission errors:**
 - Ensure writable directories exist on host (e.g., `.npm/` for npm cache)

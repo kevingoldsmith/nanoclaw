@@ -128,6 +128,17 @@ function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_END_MARKER);
 }
 
+// Separate from the output markers so the host's output consumers never see
+// it. Must match MCP_STATUS_*_MARKER in src/mcp-health.ts.
+const MCP_STATUS_START_MARKER = '---NANOCLAW_MCP_STATUS_START---';
+const MCP_STATUS_END_MARKER = '---NANOCLAW_MCP_STATUS_END---';
+
+function writeMcpStatus(servers: { name: string; status: string }[]): void {
+  console.log(MCP_STATUS_START_MARKER);
+  console.log(JSON.stringify(servers));
+  console.log(MCP_STATUS_END_MARKER);
+}
+
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
@@ -832,6 +843,12 @@ async function runQuery(
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);
+      // A stdio MCP server that crashes on startup is dropped silently: its
+      // tools just never appear. Report every server's status to the host,
+      // which logs failures and warns on Slack.
+      const servers = message.mcp_servers ?? [];
+      log(`MCP servers: ${servers.map((s) => `${s.name}=${s.status}`).join(', ') || 'none'}`);
+      writeMcpStatus(servers);
     }
 
     if (

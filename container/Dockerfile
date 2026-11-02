@@ -56,6 +56,10 @@ RUN npm install -g @doist/todoist-ai@8.4.2 \
 
 # Joplin logs directory (writable)
 RUN mkdir -p /home/node/.config/joplin-mcp && chown node:node /home/node/.config/joplin-mcp
+# joplin-mcp-server hardcodes its log dir to <package>/logs and mkdirs it at
+# startup. The package is root-owned and the container runs as the host uid,
+# so the mkdir fails with EACCES and the server exits before registering tools.
+RUN ln -s /tmp /usr/local/lib/node_modules/joplin-mcp-server/logs
 
 # DistroKid Slack MCP binary
 COPY bin/slack-mcp-server /usr/local/bin/slack-mcp-server

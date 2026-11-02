@@ -29,6 +29,7 @@ import {
 import { startCredentialProxy } from './credential-proxy.js';
 import { setNotify as setAuthStateNotify } from './auth-state.js';
 import { setSkillOverwriteNotify } from './skill-sync.js';
+import { setMcpHealthNotify } from './mcp-health.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -862,6 +863,7 @@ async function main(): Promise<void> {
     },
   });
   setSkillOverwriteNotify(notifyFirstGroup('skill-sync'));
+  setMcpHealthNotify(notifyFirstGroup('mcp-health'));
   startCredentialExpiryWatcher({
     intervalMs: CREDENTIAL_EXPIRY_INTERVAL_MS,
     warnThresholdSeconds: CREDENTIAL_EXPIRY_WARN_SECONDS,

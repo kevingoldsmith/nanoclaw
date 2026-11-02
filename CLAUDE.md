@@ -12,6 +12,7 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
 | `src/auth-state.ts` | In-memory Anthropic auth health tracker; broken/healthy transitions, notify-once |
+| `src/mcp-health.ts` | Logs MCP servers that fail at session init; Slack warning once per server, plus recovery |
 | `src/channels/registry.ts` | Channel registry (self-registration at startup) |
 | `src/channels/slack.ts` | Slack channel (Socket Mode DMs and mentions) |
 | `src/credential-proxy.ts` | HTTP proxy that injects API credentials into container requests |
@@ -171,6 +172,16 @@ IPC files from containers are limited to 1MB. Oversized files are moved to `data
 ## Container Build Cache
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+
+**A rebuild does not reach a running container.** A group's container stays alive up to `IDLE_TIMEOUT` (30 min) after its last reply and new messages are piped into it, so it keeps running the old image. After rebuilding, restart the service (startup stops orphaned containers) before testing a fix through chat.
+
+## MCP Server Health
+
+A stdio MCP server that crashes on startup fails silently: the SDK drops it and the agent simply never sees its tools. `joplin-mcp-server` died on `EACCES` at every spawn from March to November 2026 this way (see the Joplin entry in [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)), and the agent could only say the tools "aren't available".
+
+The agent-runner now logs every server's status from the SDK `init` message (`MCP servers: name=status, …` in the container log) and forwards it to the host between its own marker pair (`---NANOCLAW_MCP_STATUS_START---`), kept separate from the output markers so `onOutput` consumers and the legacy first-marker parse never see it. `src/mcp-health.ts` logs every `failed` / `needs-auth` at error level, and posts one Slack warning per server until it next reports `connected`, which posts a `✓ … recovered` message. `pending` is logged at warn only. State is in-memory and resets on restart, like auth-state.
+
+The status says *that* a server failed, not why. To see the error, run the server by hand in the image as the host uid; the recipe is in INTEGRATIONS.md → Troubleshooting.
 
 ## Credential Drop Watcher
 

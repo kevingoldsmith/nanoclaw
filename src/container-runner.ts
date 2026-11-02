@@ -36,6 +36,7 @@ import {
 } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { markBroken, markHealthy } from './auth-state.js';
+import { extractMcpStatusReports, recordMcpStatus } from './mcp-health.js';
 import { RegisteredGroup } from './types.js';
 
 /** OAuth token refresh endpoint (same as Claude Code uses). */
@@ -684,9 +685,16 @@ export async function runContainerAgent(
     let parseBuffer = '';
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
+    // MCP status reports use their own markers and are scanned in both
+    // streaming and legacy mode — see mcp-health.ts.
+    let mcpStatusBuffer = '';
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
+
+      const mcp = extractMcpStatusReports(mcpStatusBuffer + chunk);
+      mcpStatusBuffer = mcp.rest;
+      for (const servers of mcp.reports) recordMcpStatus(group.folder, servers);
 
       // Always accumulate for logging
       if (!stdoutTruncated) {
